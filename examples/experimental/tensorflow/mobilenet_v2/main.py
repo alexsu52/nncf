@@ -29,7 +29,7 @@ ROOT = Path(__file__).parent.resolve()
 # Path to the directory where the original and quantized models will be saved.
 MODEL_DIR = ROOT / 'mobilenet_v2_quantization'
 # Path to ImageNet validation dataset.
-DATASET_DIR = ROOT / 'imagenet'
+DATASET_DIR = Path('/ssd/tensorflow/imagenet') #ROOT / 'imagenet'
 
 
 def run_example():
@@ -39,8 +39,26 @@ def run_example():
     # Step 1: Instantiate the MobileNetV2 from the Keras Applications.
     model = tf.keras.applications.MobileNetV2()
 
+    if not MODEL_DIR.exists():
+        os.makedirs(MODEL_DIR)
+
+    model_name = 'mobilenet_v2'
+    saved_model_dir = MODEL_DIR / model_name
+    model.save(saved_model_dir)
+    print(f'The quantized model is exported to {saved_model_dir}')
+
+    # Step 5: Run OpenVINO Model Optimizer to convert TensorFlow model to OpenVINO IR.
+    mo_command = f'mo --saved_model_dir {saved_model_dir} ' \
+                 f'--model_name {model_name} --output_dir {MODEL_DIR}'
+    subprocess.call(mo_command, shell=True)
+
+    ie = ov.Core()
+    ir_model_xml = MODEL_DIR / f'{model_name}.xml'
+    ir_model_bin = MODEL_DIR / f'{model_name}.bin'
+    ov_model = ie.read_model(model=ir_model_xml, weights=ir_model_bin)
+
     # Step 2: Create calibration dataset.
-    data_source = create_data_source(batch_size=128)
+    data_source = create_data_source(batch_size=1)
 
     # Step 3: Apply quantization algorithm.
 
@@ -49,7 +67,7 @@ def run_example():
     # expected input that can be used for the model inference.
     def transform_fn(data_item):
         images, _ = data_item
-        return images
+        return images.numpy()
 
     # Wrap framework-specific data source into the `nncf.Dataset` object.
     calibration_dataset = nncf.Dataset(data_source, transform_fn)
@@ -58,21 +76,21 @@ def run_example():
     # Sequential or Keras Functional API. The `quantize` method expects
     # a TensorFlow Keras model as input and returns a TensorFlow Keras model
     # that has been quantized using the calibration dataset.
-    quantized_model = nncf.quantize(model, calibration_dataset)
+    quantized_model = nncf.quantize(ov_model, calibration_dataset)
 
     # Step 4: Save the quantized TensorFlow Keras model.
-    if not MODEL_DIR.exists():
-        os.makedirs(MODEL_DIR)
+    # if not MODEL_DIR.exists():
+    #     os.makedirs(MODEL_DIR)
 
-    model_name = 'mobilenet_v2'
-    saved_model_dir = MODEL_DIR / model_name
-    quantized_model.save(saved_model_dir)
-    print(f'The quantized model is exported to {saved_model_dir}')
+    # model_name = 'mobilenet_v2'
+    # saved_model_dir = MODEL_DIR / model_name
+    # quantized_model.save(saved_model_dir)
+    # print(f'The quantized model is exported to {saved_model_dir}')
 
-    # Step 5: Run OpenVINO Model Optimizer to convert TensorFlow model to OpenVINO IR.
-    mo_command = f'mo --saved_model_dir {saved_model_dir} ' \
-                 f'--model_name {model_name} --output_dir {MODEL_DIR}'
-    subprocess.call(mo_command, shell=True)
+    # # Step 5: Run OpenVINO Model Optimizer to convert TensorFlow model to OpenVINO IR.
+    # mo_command = f'mo --saved_model_dir {saved_model_dir} ' \
+    #              f'--model_name {model_name} --output_dir {MODEL_DIR}'
+    # subprocess.call(mo_command, shell=True)
 
     # Step 6: Compare the accuracy of the original and quantized models.
     print('Checking the accuracy of the original model:')
@@ -87,11 +105,7 @@ def run_example():
     print(f'The original model accuracy@top1: {results[1]:.4f}')
 
     print('Checking the accuracy of the quantized model:')
-    ie = ov.Core()
-    ir_model_xml = MODEL_DIR / f'{model_name}.xml'
-    ir_model_bin = MODEL_DIR / f'{model_name}.bin'
-    ir_quantized_model = ie.read_model(model=ir_model_xml, weights=ir_model_bin)
-    quantized_compiled_model = ie.compile_model(ir_quantized_model, device_name='CPU')
+    quantized_compiled_model = ie.compile_model(quantized_model, device_name='CPU')
     quantized_results = validate(quantized_compiled_model, metrics, data_source)
     print(f'The quantized model accuracy@top1: {quantized_results[0]:.4f}')
 

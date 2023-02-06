@@ -26,14 +26,16 @@ from nncf.parameters import ModelType
 from nncf.parameters import TargetDevice
 
 
-def quantize(model: TModel,
-             calibration_dataset: Dataset,
-             preset: QuantizationPreset = QuantizationPreset.PERFORMANCE,
-             target_device: TargetDevice = TargetDevice.ANY,
-             subset_size: int = 300,
-             fast_bias_correction: bool = True,
-             model_type: Optional[ModelType] = None,
-             ignored_scope: Optional[IgnoredScope] = None) -> TModel:
+def quantize(
+    model: TModel,
+    calibration_dataset: Dataset,
+    preset: QuantizationPreset = QuantizationPreset.PERFORMANCE,
+    target_device: TargetDevice = TargetDevice.ANY,
+    subset_size: int = 300,
+    fast_bias_correction: bool = True,
+    model_type: Optional[ModelType] = None,
+    ignored_scope: Optional[IgnoredScope] = None,
+    advanced_parameters: Optional[AdvancedQuantizationParameters()] = None) -> TModel:
     """
     Applies post-training quantization algorithm to provided model.
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+import onnx
 import openvino.runtime as ov
 import torch
 from fastdownload import FastDownload
@@ -148,7 +149,19 @@ quantized_model = nncf.quantize(model, calibration_dataset)
 # Benchmark performance, calculate compression rate and validate accuracy
 
 ov_model = mo.convert_model(model.cpu(), input_shape=[-1, 3, 224, 224])
-ov_quantized_model = mo.convert_model(quantized_model.cpu(), input_shape=[-1, 3, 224, 224])
+
+dummy_input = torch.randn(1, 3, 224, 224)
+int8_onnx_path = f"{ROOT}/mobilenet_v2_int8.onnx"
+torch.onnx.export(
+    quantized_model.cpu(),
+    dummy_input,
+    int8_onnx_path,
+    input_names=["images"],
+    output_names=["scores"],
+    dynamic_axes={"images": {0: "batch"}, "scores": {0: "batch"}},
+)
+
+ov_quantized_model = mo.convert_model(int8_onnx_path)
 
 fp32_ir_path = f"{ROOT}/mobilenet_v2_fp32.xml"
 ov.serialize(ov_model, fp32_ir_path)

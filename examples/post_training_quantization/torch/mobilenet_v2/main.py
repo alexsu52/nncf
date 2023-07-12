@@ -27,6 +27,7 @@ from torchvision import transforms
 from tqdm import tqdm
 
 import nncf
+from nncf.quantization.advanced_parameters import QuantizationParameters
 
 ROOT = Path(__file__).parent.resolve()
 CHECKPOINT_URL = "https://huggingface.co/alexsu52/mobilenet_v2_imagenette/resolve/main/pytorch_model.bin"
@@ -142,7 +143,11 @@ calibration_dataset = nncf.Dataset(val_data_loader, transform_fn)
 torch_quantized_model = nncf.quantize(
     torch_model,
     calibration_dataset,
-    advanced_parameters=nncf.AdvancedQuantizationParameters(disable_bias_correction=True),
+    advanced_parameters=nncf.AdvancedQuantizationParameters(
+        disable_bias_correction=True,
+        activations_quantization_params=QuantizationParameters(per_channel=False),
+        weights_quantization_params=QuantizationParameters(per_channel=False),
+    ),
 )
 
 ###############################################################################
@@ -150,27 +155,32 @@ torch_quantized_model = nncf.quantize(
 
 dummy_input = torch.randn(1, 3, 224, 224)
 
-fp32_onnx_path = f"{ROOT}/mobilenet_v2_fp32.onnx"
-torch.onnx.export(
-    torch_model.cpu(),
-    dummy_input,
-    fp32_onnx_path,
-    input_names=["input"],
-    output_names=["output"],
-    dynamic_axes={"input": {0: "-1"}},
-)
-ov_model = mo.convert_model(fp32_onnx_path)
+# fp32_onnx_path = f"{ROOT}/mobilenet_v2_fp32.onnx"
+# torch.onnx.export(
+#     torch_model.cpu(),
+#     dummy_input,
+#     fp32_onnx_path,
+#     input_names=["input"],
+#     output_names=["output"],
+#     dynamic_axes={"input": {0: "-1"}},
+# )
+# ov_model = mo.convert_model(fp32_onnx_path)
 
-int8_onnx_path = f"{ROOT}/mobilenet_v2_int8.onnx"
-torch.onnx.export(
-    torch_quantized_model.cpu(),
-    dummy_input,
-    int8_onnx_path,
-    input_names=["input"],
-    output_names=["output"],
-    dynamic_axes={"input": {0: "-1"}},
-)
-ov_quantized_model = mo.convert_model(int8_onnx_path)
+ov_model = mo.convert_model(torch_model, example_input=dummy_input)
+
+# int8_onnx_path = f"{ROOT}/mobilenet_v2_int8.onnx"
+# torch.onnx.export(
+#     torch_quantized_model.cpu(),
+#     dummy_input,
+#     int8_onnx_path,
+#     input_names=["input"],
+#     output_names=["output"],
+#     dynamic_axes={"input": {0: "-1"}},
+# )
+# ov_quantized_model = mo.convert_model(int8_onnx_path)
+
+# torch_quantized_stripped_model = nncf.strip(torch_quantized_model)
+ov_quantized_model = mo.convert_model(torch_quantized_model, example_input=dummy_input)
 
 fp32_ir_path = f"{ROOT}/mobilenet_v2_fp32.xml"
 ov.serialize(ov_model, fp32_ir_path)

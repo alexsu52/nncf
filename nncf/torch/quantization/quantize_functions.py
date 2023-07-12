@@ -18,7 +18,7 @@ from nncf.torch.functions import STRound
 from nncf.torch.functions import clamp
 from nncf.torch.quantization.extensions import QuantizedFunctionsCPU
 from nncf.torch.quantization.extensions import QuantizedFunctionsCUDA
-from nncf.torch.utils import add_domain
+from nncf.torch.utils import add_domain, no_jit_trace
 
 
 # pylint:disable=abstract-method
@@ -146,7 +146,22 @@ class ExportQuantizeToFakeQuantize(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, input_, levels, input_low, input_high, output_low, output_high):
-        return torch.clone(input_)
+        with no_jit_trace():
+            assert levels in [255, 256]
+            if torch.any(input_low < 0):
+                q_min = -128
+                q_max = 127
+            else:
+                q_min = 0
+                q_max = 255
+
+            if levels == 255:
+                q_min += 1
+
+            scale, zero_point = get_scale_zp_from_input_low_input_high(q_min, q_max, input_low, input_high)
+            print(zero_point)
+
+        return torch.fake_quantize_per_tensor_affine(input_, scale, zero_point, q_min, q_max)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:

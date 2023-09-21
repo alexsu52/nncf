@@ -10,6 +10,7 @@
 # limitations under the License.
 
 import multiprocessing
+import concurrent.futures
 from typing import Any, List, Optional
 
 import numpy as np
@@ -33,10 +34,10 @@ from nncf.quantization.algorithms.accuracy_control.backend import AccuracyContro
 from nncf.quantization.algorithms.accuracy_control.backend import AsyncPreparedModel
 
 
-def compile_model(model: ov.Model, done_queue: multiprocessing.Queue) -> None:
-    compiled_model = ov.Core().compile_model(model, "CPU")
-    model_stream = compiled_model.export_model()
-    done_queue.put(model_stream)
+def compile_model(model: ov.Model) -> None:
+    ov_core = ov.Core()
+    compiled_model = ov_core.compile_model(model, "CPU")
+    return compiled_model
 
 
 class OVAsyncPreparedModel(AsyncPreparedModel):
@@ -117,8 +118,7 @@ class OVAccuracyControlAlgoBackend(AccuracyControlAlgoBackend):
         return ov.compile_model(model)
 
     @staticmethod
-    def prepare_for_inference_async(model: ov.Model) -> Any:
-        queue = multiprocessing.Queue()
-        p = multiprocessing.Process(target=compile_model, args=(model, queue))
-        p.start()
-        return OVAsyncPreparedModel(p, queue)
+    def prepare_for_inference_async(models: ov.Model, max_workers: int=20) -> Any:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            results = [i for i in executor.map(compile_model, models)]
+        return results

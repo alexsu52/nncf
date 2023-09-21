@@ -151,7 +151,7 @@ class Ranker:
         with timer():
             # Calculate ranking score for groups of quantizers.
             if self._num_processes > 1:
-                ranking_scores = self._multiprocessing_calculation_ranking_score(
+                ranking_scores = self._multithreading_calculation_ranking_score(
                     quantized_model,
                     quantized_model_graph,
                     groups_to_rank,
@@ -224,6 +224,31 @@ class Ranker:
             ranking_score = self._calculate_ranking_score(
                 prepared_model, ranking_subset_indices, reference_values_for_each_item
             )
+            ranking_scores.append(float(ranking_score))
+
+        return ranking_scores
+
+    def _multithreading_calculation_ranking_score(
+        self,
+        quantized_model: TModel,
+        quantized_model_graph: NNCFGraph,
+        groups_to_rank: List[GroupToRank],
+        ranking_subset_indices: List[int],
+    ):
+        
+        ranking_scores = []  # ranking_scores[i] is the ranking score for groups_to_rank[i]
+        modified_models = []
+        for current_group in groups_to_rank:
+            modified_model = revert_operations_to_floating_point_precision(
+                current_group.operations, current_group.quantizers, quantized_model, quantized_model_graph
+            )
+
+            modified_models.append(modified_model)
+
+        results = self._algo_backend.prepare_for_inference_async(modified_models)
+
+        for model in results:
+            ranking_score = self._calculate_ranking_score(model, ranking_subset_indices)
             ranking_scores.append(float(ranking_score))
 
         return ranking_scores

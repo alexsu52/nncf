@@ -30,6 +30,8 @@ from nncf.torch.dynamic_graph.io_handling import replicate_same_tensors
 from nncf.torch.dynamic_graph.io_handling import wrap_nncf_model_inputs_with_objwalk
 from nncf.torch.dynamic_graph.io_handling import wrap_nncf_model_outputs_with_objwalk
 from nncf.torch.initialization import PTInitializingDataLoader
+from nncf.torch.layer_utils import _NNCFModuleMixin
+from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.model_creation import create_compressed_model
 from nncf.torch.nested_objects_traversal import objwalk
 from nncf.torch.nncf_module_replacement import replace_modules_by_nncf_modules
@@ -260,11 +262,43 @@ def quantize_impl(
     return compressed_model
 
 
+NNCF_WRAPPED_MODULES_DICT = {}
+
+
+def _patch_module(module: torch.nn.Module) -> torch.nn.Module:
+    if isinstance(module, (torch.nn.ModuleDict, torch.nn.ModuleList, torch.nn.Sequential, _NNCFModuleMixin)):
+        return
+    module_class = module.__class__
+    if module_class in NNCF_WRAPPED_USER_MODULES_DICT:
+        wrapped_class = NNCF_WRAPPED_USER_MODULES_DICT[module_class]
+    elif module_class in NNCF_WRAPPED_MODULES_DICT:
+        wrapped_class = NNCF_WRAPPED_MODULES_DICT[module_class]
+    else:
+        nncf_wrapped_module_class_name = "NNCF{}".format(module_class.__name__)
+        wrapped_class = type(nncf_wrapped_module_class_name, (_NNCFModuleMixin, module_class), {})
+
+        NNCF_WRAPPED_MODULES_DICT[module_class] = wrapped_class
+    module.__class__ = wrapped_class
+
+    # def hack_forward(self, *args, **kwargs):
+    #     super(type(self), self).forward(*args, **kwargs)
+
+    # module.__dict__["forward"] = hack_forward
+    _NNCFModuleMixin.add_mixin_fields(module)
+
+
+def patch_module(module: torch.nn.Module) -> torch.nn.Module:
+    for _, children_module in module.named_children():
+        patch_module(children_module)
+    _patch_module(module)
+
+
 def compress_weights_impl(model: torch.nn.Module) -> torch.nn.Module:
     """
     Implementation of the `compress_weights()` method for the PyTorch backend.
     """
-    compressed_model, _ = replace_modules_by_nncf_modules(model)
+
+    patch_module(model)
     insert_pre_compression_operations(model)
 
-    return compressed_model
+    return model

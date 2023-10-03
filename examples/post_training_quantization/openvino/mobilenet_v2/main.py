@@ -100,7 +100,7 @@ val_dataset = datasets.ImageFolder(
         ]
     ),
 )
-val_data_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False)
+val_data_loader = torch.utils.data.DataLoader(val_dataset, batch_size=150, shuffle=False)
 
 path_to_model = download(MODEL_URL, MODEL_PATH)
 ov_model = ov.Core().read_model(path_to_model / "mobilenet_v2_fp32.xml")
@@ -117,7 +117,7 @@ ov_model = ov.Core().read_model(path_to_model / "mobilenet_v2_fp32.xml")
 
 def transform_fn(data_item):
     images, _ = data_item
-    return images
+    return images.numpy()
 
 
 # The calibration dataset is a small, no label, representative dataset
@@ -130,8 +130,9 @@ def transform_fn(data_item):
 # item and prepare model input data. The quantize method uses a small subset
 # (default: 300 samples) of the calibration dataset.
 
+ov_model.reshape([-1, 3, 224, 224])
 calibration_dataset = nncf.Dataset(val_data_loader, transform_fn)
-ov_quantized_model = nncf.quantize(ov_model, calibration_dataset)
+ov_quantized_model = nncf.quantize(ov_model, calibration_dataset, subset_size=2)
 
 ###############################################################################
 # Benchmark performance, calculate compression rate and validate accuracy
@@ -151,10 +152,12 @@ fp32_fps = run_benchmark(fp32_ir_path, shape=[1, 3, 224, 224], verbose=True)
 print("[4/7] Benchmark INT8 model:")
 int8_fps = run_benchmark(int8_ir_path, shape=[1, 3, 224, 224], verbose=True)
 
+ov_model.reshape([-1, 3, 224, 224])
 print("[5/7] Validate OpenVINO FP32 model:")
 fp32_top1 = validate(ov_model, val_data_loader)
 print(f"Accuracy @ top1: {fp32_top1:.3f}")
 
+ov_quantized_model.reshape([-1, 3, 224, 224])
 print("[6/7] Validate OpenVINO INT8 model:")
 int8_top1 = validate(ov_quantized_model, val_data_loader)
 print(f"Accuracy @ top1: {int8_top1:.3f}")

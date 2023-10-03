@@ -9,15 +9,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Dict, List, Optional
 
 import torch
 from torch import nn
+from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 
 from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
 from nncf.torch.layers import NNCFEmbedding
 from nncf.torch.layers import NNCFLinear
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
+
+
+@register_operator()
+def decompress_weights(w: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor) -> torch.Tensor:
+    dw = w.type(dtype=scale.dtype)
+    return (dw - zero_point) * scale
 
 
 class WeightsDecompressor(nn.Module):
@@ -28,14 +36,13 @@ class WeightsDecompressor(nn.Module):
         scale: scale in quantizatin scheme
     """
 
-    def __init__(self, zero_point, scale):
+    def __init__(self, zero_point, scale, weight_attr_name: str = "weight"):
         super().__init__()
         self.zero_point = zero_point
         self.scale = scale
 
-    def forward(self, layer, op_arg):
-        w = layer.weight.type(dtype=self.scale.dtype)
-        layer.weight = (w - self.zero_point) * self.scale
+    def forward(self, layer):
+        layer.weight = decompress_weights(layer.weight, self.scale, self.zero_point)
 
 
 def _insert_pre_compression_operations(
@@ -54,13 +61,13 @@ def _insert_pre_compression_operations(
     if compression_hist is None:
         compression_hist = {}
     for _, layer in module.named_children():
-        if not type(layer) in allowed_types:
+        if not isinstance(layer, allowed_types):
             _insert_pre_compression_operations(layer, allowed_types, level_high, compression_hist)
             continue
 
         if layer.weight.dtype in [torch.uint8, torch.int8]:
             if layer.weight in compression_hist:
-                layer.register_pre_forward_operation(compression_hist[layer.weight])
+                layer.reqister_update_operation(compression_hist[layer.weight])
             continue
 
         target_dim = layer.target_weight_dim_for_compression
@@ -71,7 +78,7 @@ def _insert_pre_compression_operations(
 
         scale = scale.unsqueeze(stat_dim)
         zero_point = zero_point.unsqueeze(stat_dim)
-        key = layer.register_pre_forward_operation(WeightsDecompressor(zero_point, scale))
+        key = layer.reqister_update_operation(WeightsDecompressor(zero_point, scale))
 
         compressed_weight = layer.weight.data / scale + zero_point
         compressed_weight = torch.clamp(torch.round(compressed_weight), 0, level_high)
@@ -79,7 +86,7 @@ def _insert_pre_compression_operations(
         layer.weight.requires_grad = False
         layer.weight.data = compressed_weight.type(dtype=torch.uint8)
 
-        compression_hist[layer.weight] = layer.get_pre_op(key)
+        compression_hist[layer.weight] = layer.get_update_op(key)
 
 
 def insert_pre_compression_operations(module: nn.Module, bits: int = 8) -> Optional[nn.Module]:
@@ -92,12 +99,9 @@ def insert_pre_compression_operations(module: nn.Module, bits: int = 8) -> Optio
     :return: The non-trainable module with inserted operations.
     """
     user_types = list(NNCF_WRAPPED_USER_MODULES_DICT.values())
-    allowed_types = [NNCFEmbedding, NNCFLinear]
+    allowed_types = tuple([torch.nn.Embedding, torch.nn.Linear] + user_types)
     level_high = 2**bits - 1
 
     assert level_high < 256
-
-    for user_type in user_types:
-        allowed_types.append(user_type)
 
     _insert_pre_compression_operations(module, allowed_types, level_high)

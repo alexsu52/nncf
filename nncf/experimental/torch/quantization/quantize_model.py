@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from nncf.common.quantization.structs import QuantizationPreset
+from nncf.common.utils.backend import copy_model
 from nncf.data import Dataset
 from nncf.parameters import ModelType
 from nncf.parameters import TargetDevice
@@ -31,7 +32,7 @@ from nncf.torch.utils import is_tensor
 from nncf.torch.utils import training_mode_switcher
 
 
-def create_nncf_network(model: torch.nn.Module, dataset: Dataset) -> NNCFNetwork:
+def create_nncf_network(model: torch.nn.Module, example_input: Any, do_copy: bool = False) -> NNCFNetwork:
     """
     Creates NNCFNetwork instance for the PyTorch model where the first item of dataset
     is used for model tracing.
@@ -52,11 +53,12 @@ def create_nncf_network(model: torch.nn.Module, dataset: Dataset) -> NNCFNetwork
     def wrap_outputs(retval):
         return wrap_nncf_model_outputs_with_objwalk(retval)
 
-    def create_dummy_forward_fn(dataset, device):
+    def create_dummy_forward_fn(example_input):
         def dummy_forward(model):
             with no_nncf_trace():
-                args = next(iter(dataset.get_inference_data()))
-                args, kwargs = get_inputs(args)
+                device = get_model_device(model)
+
+                args, kwargs = get_inputs(example_input)
 
                 def send_to_device(tensor):
                     return tensor.to(device)
@@ -71,12 +73,12 @@ def create_nncf_network(model: torch.nn.Module, dataset: Dataset) -> NNCFNetwork
 
         return dummy_forward
 
-    device = get_model_device(model)
-    dummy_forward_fn = create_dummy_forward_fn(dataset, device)
+    dummy_forward_fn = create_dummy_forward_fn(example_input)
 
-    with training_mode_switcher(model, is_training=False):
+    target_model = copy_model(model) if do_copy else model
+    with training_mode_switcher(target_model, is_training=False):
         nncf_network = NNCFNetwork(
-            model, dummy_forward_fn=dummy_forward_fn, wrap_inputs_fn=wrap_inputs, wrap_outputs_fn=wrap_outputs
+            target_model, dummy_forward_fn=dummy_forward_fn, wrap_inputs_fn=wrap_inputs, wrap_outputs_fn=wrap_outputs
         )
 
         nncf_network.nncf.get_tracing_context().disable_trace_dynamic_graph()
@@ -103,7 +105,8 @@ def quantize_impl(
     if target_device == TargetDevice.CPU_SPR:
         raise RuntimeError("target_device == CPU_SPR is not supported")
 
-    nncf_network = create_nncf_network(model.eval(), calibration_dataset)
+    example_input = next(iter(calibration_dataset.get_inference_data()))
+    nncf_network = create_nncf_network(model.eval(), example_input)
 
     quantization_algorithm = PostTrainingQuantization(
         preset=preset,

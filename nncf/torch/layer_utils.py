@@ -17,12 +17,20 @@ from nncf.common.utils.registry import Registry
 COMPRESSION_MODULES = Registry("compression modules")
 
 
+class ProxyParameter:
+    def __init__(self, proxy_module):
+        self.proxy_module = proxy_module
+
+
 class ProxyModule:
     def __init__(self, module):
         self._module = module
 
     def __getattr__(self, name):
         return getattr(self._module, name)
+
+    def __call__(self, *args, **kwargs):
+        return self._module(*args, **kwargs)
 
     @property
     def __class__(self):
@@ -54,12 +62,25 @@ class _NNCFModuleMixin:
     def add_mixin_fields(obj):
         obj.pre_ops = nn.ModuleDict()
         obj.post_ops = nn.ModuleDict()
+        obj.update_ops = nn.ModuleDict()
+        obj._proxy = None
+
+    def get_update_op(self, key):
+        return self.update_ops[key]
 
     def get_pre_op(self, key):
         return self.pre_ops[key]
 
     def get_post_op(self, key):
         return self.post_ops[key]
+
+    def reqister_update_operation(self, op):
+        key = str(len(self.update_ops))
+        self.update_ops[key] = op
+        return key
+
+    def remove_update_operation(self, key):
+        return self.update_ops.pop(key)
 
     def register_pre_forward_operation(self, op):
         key = str(len(self.pre_ops))
@@ -81,16 +102,50 @@ class _NNCFModuleMixin:
         self.pre_ops.clear()
         self.post_ops.clear()
 
-    def forward(self, *args):
+    def __setattr__(self, name, value):
+        if name == "forward":
+            self._custom_forward_fn = value
+        else:
+            super().__setattr__(name, value)
+
+    def _get_proxy(self):
+        if isinstance(self, ProxyModule):
+            return self
+
         proxy_module = ProxyModule(self)
+        for op in self.update_ops.values():
+            op(proxy_module)
+
+        for children_module_name, children_module in proxy_module.named_children():
+            if children_module_name in ["pre_ops", "post_ops", "update_ops"]:
+                continue
+            if isinstance(children_module, _NNCFModuleMixin):
+                setattr(proxy_module, children_module_name, children_module.get_proxy())
+
+        return proxy_module
+
+    def get_proxy(self):
+        proxy = self._get_proxy()
+        self._proxy = ProxyParameter(proxy)
+        return proxy
+
+    def _get_forward_proxy(self):
+        if self._proxy is None:
+            return self._get_proxy()
+        return self._proxy.proxy_module
+
+    def forward(self, *args, **kwargs):
+        proxy_module = self._get_forward_proxy()
         for op in self.pre_ops.values():
-            op_args = op(proxy_module, args)
+            op_args, op_kwargs = op(proxy_module, args, kwargs)
             if op_args is not None:
                 if not isinstance(op_args, tuple):
                     op_args = tuple([op_args])
                 args = op_args
+            if op_kwargs is not None:
+                kwargs = op_kwargs
         forward_fn = self._custom_forward_fn.__func__ if self._custom_forward_fn else super().forward.__func__
-        results = forward_fn(proxy_module, *args)
+        results = forward_fn(proxy_module, *args, **kwargs)
         for op in self.post_ops.values():
             op_results = op(proxy_module, results)
             if op_results is not None:

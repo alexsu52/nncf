@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, List, Optional, Tuple, TypeVar, Unio
 
 from nncf.api.compression import TModel
 from nncf.common.factory import NNCFGraphFactory
+from nncf.common.logging import nncf_logger
 from nncf.common.quantization.structs import QuantizationPreset
 from nncf.common.utils.api_marker import api
 from nncf.common.utils.backend import BackendType
@@ -28,7 +29,7 @@ from nncf.quantization.algorithms.accuracy_control.evaluator import MetricResult
 from nncf.quantization.algorithms.hyperparameter_tuner.algorithm import HyperparameterTuner
 from nncf.quantization.algorithms.hyperparameter_tuner.param_grid import get_quantization_param_grids
 from nncf.quantization.algorithms.post_training.pipeline import create_ptq_pipeline
-from nncf.quantization.algorithms.weight_compression.algorithm import WeightCompression
+from nncf.quantization.algorithms.weights_compression.algorithm import WeightCompression
 from nncf.scopes import IgnoredScope
 
 TTensor = TypeVar("TTensor")
@@ -241,6 +242,7 @@ def quantize_with_accuracy_control(
 @api(canonical_alias="nncf.compress_weights")
 def compress_weights(
     model: TModel,
+    example_input: Optional[Any] = None,
     mode=CompressWeightsMode.INT8,
     ratio: Optional[float] = None,
     group_size: Optional[int] = None,
@@ -250,6 +252,8 @@ def compress_weights(
     Compress model weights.
 
     :param model: A model to be compressed.
+    :param example_input: A tuple or dict of example input that will be passed to
+        the model while tracing. This is a required parameter for Torch models only.
     :param mode: Defines a mode for weight compression.
         INT8 stands for 8-bit integer quantization of all weights.
         INT4_SYM stands for a mixed-precision weights quantization with 4-bit integer as a primary precision.
@@ -284,13 +288,16 @@ def compress_weights(
         if group_size is None:
             group_size = 128
 
+    compression_algorithm = WeightCompression(mode, ratio, group_size, ignored_scope)
+
     backend = get_backend(model)
     if backend == BackendType.TORCH:
-        from nncf.torch.quantization.quantize_model import compress_weights_impl
+        from nncf.experimental.torch.quantization.quantize_model import wrap_model
 
-        return compress_weights_impl(model, mode, ratio, group_size, ignored_scope)
+        model = wrap_model(model, example_input)
+    elif example_input is not None:
+        nncf_logger.info(f"Example input will be ignored because this is not required to trace {backend.value} models")
 
-    compression_algorithm = WeightCompression(mode, ratio, group_size, ignored_scope)
     graph = NNCFGraphFactory.create(model)
     return compression_algorithm.apply(model, graph)
 

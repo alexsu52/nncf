@@ -22,7 +22,7 @@ from nncf.data import Dataset
 from nncf.openvino.graph.nncf_graph_builder import GraphConverter
 from nncf.openvino.graph.node_utils import get_number_if_op
 from nncf.openvino.quantization.backend_parameters import BackendParameters
-from nncf.openvino.quantization.backend_parameters import is_weight_compression_needed
+from nncf.openvino.quantization.backend_parameters import is_weights_compression_needed
 from nncf.openvino.quantization.quantize_ifmodel import apply_algorithm_if_bodies
 from nncf.parameters import DropType
 from nncf.parameters import ModelType
@@ -132,7 +132,7 @@ def native_quantize_if_op_impl(
         quantization_algorithm, model, graph, calibration_dataset, subset_size, 1, all_models_number
     )
 
-    if is_weight_compression_needed(advanced_parameters):
+    if is_weights_compression_needed(advanced_parameters):
         compress_quantize_weights_transformation(quantized_model)
 
     dump_parameters(
@@ -178,7 +178,7 @@ def native_quantize_impl(
     graph = GraphConverter.create_nncf_graph(model)
     quantized_model = quantization_algorithm.apply(model, graph, dataset=calibration_dataset)
 
-    if is_weight_compression_needed(advanced_parameters):
+    if is_weights_compression_needed(advanced_parameters):
         compress_quantize_weights_transformation(quantized_model)
 
     dump_parameters(
@@ -222,7 +222,7 @@ def native_quantize_with_accuracy_control_impl(
     if advanced_accuracy_restorer_parameters is None:
         advanced_accuracy_restorer_parameters = AdvancedAccuracyRestorerParameters()
 
-    compress_weights = is_weight_compression_needed(advanced_quantization_parameters)
+    compress_weights = is_weights_compression_needed(advanced_quantization_parameters)
 
     if advanced_quantization_parameters is None:
         copied_parameters = AdvancedQuantizationParameters()

@@ -246,3 +246,17 @@ class TuneRange(torch.autograd.Function):
         grad_input_low = grad_outputs[0]
         grad_input_range = grad_outputs[1]
         return grad_input_low, grad_input_range, None
+
+
+@register_operator()
+def decompress(input: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor) -> torch.Tensor:
+    """
+    Decompression of the input tensor.
+
+    :param input: An input tensor
+    :param scale: A scale tensor
+    :param zero_point: A zero point tensor
+    :return: The decompressed tensor
+    """
+    dinput = input.type(dtype=scale.dtype)
+    return (dinput - zero_point) * scale

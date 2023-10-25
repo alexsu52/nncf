@@ -13,11 +13,16 @@ from typing import Dict, List, Optional
 
 import torch
 from torch import nn
+from nncf.torch.dynamic_graph.patch_pytorch import register_operator
 
-from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT
-from nncf.torch.layers import NNCFEmbedding
-from nncf.torch.layers import NNCFLinear
+from nncf.torch.layers import NNCF_WRAPPED_USER_MODULES_DICT, NNCFEmbedding, NNCFLinear
 from nncf.torch.quantization.quantize_functions import get_scale_zp_from_input_low_input_high
+
+
+@register_operator()
+def decompress_weights(w: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor) -> torch.Tensor:
+    dw = w.type(dtype=scale.dtype)
+    return (dw - zero_point) * scale
 
 
 class WeightsDecompressor(nn.Module):
@@ -33,9 +38,8 @@ class WeightsDecompressor(nn.Module):
         self.zero_point = zero_point
         self.scale = scale
 
-    def forward(self, layer, op_arg):
-        w = layer.weight.type(dtype=self.scale.dtype)
-        layer.weight = (w - self.zero_point) * self.scale
+    def forward(self, layer, _):
+        layer.weight = decompress_weights(layer.weight, self.scale, self.zero_point)
 
 
 def _insert_pre_compression_operations(
@@ -54,7 +58,7 @@ def _insert_pre_compression_operations(
     if compression_hist is None:
         compression_hist = {}
     for _, layer in module.named_children():
-        if type(layer) not in allowed_types:
+        if not isinstance(layer, allowed_types):
             _insert_pre_compression_operations(layer, allowed_types, level_high, compression_hist)
             continue
 
@@ -91,12 +95,9 @@ def insert_pre_compression_operations(module: nn.Module, bits: int = 8) -> Optio
     :return: The non-trainable module with inserted operations.
     """
     user_types = list(NNCF_WRAPPED_USER_MODULES_DICT.values())
-    allowed_types = [NNCFEmbedding, NNCFLinear]
+    allowed_types = tuple([NNCFEmbedding, NNCFLinear] + user_types)
     level_high = 2**bits - 1
 
     assert level_high < 256
-
-    for user_type in user_types:
-        allowed_types.append(user_type)
 
     _insert_pre_compression_operations(module, allowed_types, level_high)

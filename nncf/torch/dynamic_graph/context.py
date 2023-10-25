@@ -71,6 +71,7 @@ class TracingThreadLocals(threading.local):
         self.operator_counters = {}
         self.node_call_tracker = {}
         self.traced_tensor_weakrefs = []
+        self.traced_parameters = {}
 
 
 class CopySafeThreadingVars:
@@ -136,6 +137,8 @@ class TracingContext:
                 tt = traced_tensor_weakref()
                 if tt is not None:
                     tt.nncf_expire()
+                    if hasattr(tt, "tensor_meta"):
+                        delattr(tt, "tensor_meta")
 
         self._reset_thread_local()
 
@@ -157,6 +160,12 @@ class TracingContext:
 
     def register_global_buffer(self, name: str, buffer):
         self.global_buffer_store[name] = buffer
+
+    def register_processed_parameter(self, name, tp):
+        self._threading.thread_local.traced_parameters[name] = tp
+
+    def get_processed_parameter(self, name):
+        return self._threading.thread_local.traced_parameters.get(name, None)
 
     def register_traced_tensor(self, tt: TracedTensor):
         """

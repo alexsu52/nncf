@@ -25,7 +25,7 @@ class BackendParameters:
     USE_POT = "use_pot"
 
 
-def is_weight_compression_needed(advanced_parameters: Optional[AdvancedQuantizationParameters]) -> bool:
+def is_weights_compression_needed(advanced_parameters: Optional[AdvancedQuantizationParameters]) -> bool:
     """
     Determines whether weight compression is needed based on the provided
     advanced quantization parameters.

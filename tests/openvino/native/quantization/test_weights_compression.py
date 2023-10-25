@@ -20,9 +20,9 @@ from attr import dataclass
 from nncf import CompressWeightsMode
 from nncf.openvino.graph.node_utils import get_const_value
 from nncf.quantization import compress_weights
-from nncf.quantization.algorithms.weight_compression.openvino_backend import WeightCompressionConfig
-from nncf.quantization.algorithms.weight_compression.openvino_backend import _get_integer_quantization_error
-from nncf.quantization.algorithms.weight_compression.openvino_backend import _reshape_weights_for_grouped_quantization
+from nncf.quantization.algorithms.weights_compression.openvino_backend import _calculate_scale_per_group
+from nncf.quantization.algorithms.weights_compression.openvino_backend import _get_int8_err
+from nncf.quantization.algorithms.weights_compression.openvino_backend import _get_nf4_error
 from nncf.scopes import IgnoredScope
 from tests.openvino.native.common import get_openvino_version
 from tests.openvino.native.models import IntegerModel

@@ -25,6 +25,7 @@ from nncf.torch.dynamic_graph.layer_attributes_handlers import get_layer_attribu
 from nncf.torch.dynamic_graph.op_input_processing import OperatorInput
 from nncf.torch.dynamic_graph.structs import PatchedOperatorInfo
 from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas
+from nncf.torch.dynamic_graph.trace_tensor import make_tensor_metas, trace_parameters
 from nncf.torch.dynamic_graph.trace_tensor import trace_tensors
 from nncf.torch.layer_utils import _NNCFModuleMixin
 from nncf.torch.layers import ITERATION_MODULES
@@ -169,6 +170,7 @@ def _execute_op(
     op_name = operator_info.name
 
     op_input = OperatorInput(list(args), kwargs)
+    op_input = trace_parameters(op_input, ctx)
     processed_input = ctx.execute_pre_hooks(op_address, op_input)
     args = tuple(processed_input.op_args)
     kwargs = processed_input.op_kwargs

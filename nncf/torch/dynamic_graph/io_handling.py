@@ -18,6 +18,7 @@ import torch
 
 from nncf import Dataset
 from nncf import NNCFConfig
+from nncf.common.graph.definitions import MODEL_CONST_OP_NAME
 from nncf.common.graph.definitions import MODEL_INPUT_OP_NAME
 from nncf.common.graph.definitions import MODEL_OUTPUT_OP_NAME
 from nncf.common.initialization.dataloader import NNCFDataLoader
@@ -37,13 +38,18 @@ from nncf.torch.utils import is_traced_tensor
 @api(canonical_alias="nncf.torch.nncf_model_input")
 @register_operator(name=MODEL_INPUT_OP_NAME)
 def nncf_model_input(tensor: "torch.Tensor"):
-    return tensor
+    return torch.Tensor(tensor)
 
 
 @api(canonical_alias="nncf.torch.nncf_model_output")
 @register_operator(name=MODEL_OUTPUT_OP_NAME)
 def nncf_model_output(tensor: "torch.Tensor"):
     return tensor
+
+
+@register_operator(name=MODEL_CONST_OP_NAME)
+def nncf_model_const(parameter: torch.nn.Parameter):
+    return parameter
 
 
 def wrap_nncf_model_inputs_with_objwalk(model_args, model_kwargs):

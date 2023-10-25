@@ -51,7 +51,6 @@ from nncf.torch.dynamic_graph.operation_address import OperationAddress
 from nncf.torch.dynamic_graph.patch_pytorch import ORIGINAL_CALL
 from nncf.torch.dynamic_graph.scope import Scope
 from nncf.torch.dynamic_graph.scope_access import get_module_by_scope
-from nncf.torch.dynamic_graph.trace_tensor import TracedTensor
 from nncf.torch.dynamic_graph.wrappers import wrap_module_call
 from nncf.torch.graph.graph import PTNNCFGraph
 from nncf.torch.graph.graph_builder import GraphBuilder
@@ -197,8 +196,13 @@ class NNCFNetworkInterface(torch.nn.Module):
         ignored_scopes: List[str] = None,
         target_scopes: List[str] = None,
         wrap_outputs_fn: WrapOutputsFnType = None,
+        replace_modules: bool = True,
+        trace_parameters=False,
     ):
         super().__init__()
+
+        self._replace_modules = replace_modules
+        self._trace_parameters = trace_parameters
 
         # Need this in order not to register owning module as sub-module of NNCFInterface and thus
         # avoid circular references
@@ -223,8 +227,6 @@ class NNCFNetworkInterface(torch.nn.Module):
         self._target_scopes = target_scopes
         self._user_dummy_forward_fn = dummy_forward_fn
         self._kd_loss_handler = None
-
-        device = get_model_device(model)
 
         if wrap_inputs_fn is not None:
             self._wrap_inputs_fn = wrap_inputs_fn
@@ -251,10 +253,22 @@ class NNCFNetworkInterface(torch.nn.Module):
             with_input_tracing=True, with_output_tracing=True
         )
 
-        eval_op_scopes = self._collect_eval_op_scopes(model, _orig_graph_build_forward_fn)
+        if self._replace_modules:
+            eval_op_scopes = self._collect_eval_op_scopes(model, _orig_graph_build_forward_fn)
+            # all modules called in eval mode should be replaced prior to graph building
+            self._replace_modules_by_nncf_modules(model, eval_op_scopes)
 
-        # all modules called in eval mode should be replaced prior to graph building
-        self._replace_modules_by_nncf_modules(model, device, eval_op_scopes)
+        if self._trace_parameters:
+            self._wrap_parameters(model)
+
+        def wrap_parameter(name, param):
+            param.__class__ = TracedParameter
+            param.nncf_expire()
+            param.nncf_name = name
+            param.is_cacheable = True
+
+        for name, param in model.named_parameters():
+            wrap_parameter(name, param)
 
         _orig_context = TracingContext()
 
@@ -458,13 +472,10 @@ class NNCFNetworkInterface(torch.nn.Module):
 
         return wrapped_user_dummy_forward_fn
 
-    def _replace_modules_by_nncf_modules(
-        self, model: torch.nn.Module, device: torch.device, eval_op_scopes: List[Scope] = None
-    ):
+    def _replace_modules_by_nncf_modules(self, model: torch.nn.Module, eval_op_scopes: List[Scope] = None):
         _, self._nncf_replaced_modules = replace_modules_by_nncf_modules(
             model, ignored_scopes=self._ignored_scopes, target_scopes=self._target_scopes, eval_op_scopes=eval_op_scopes
         )
-        model.to(device)
         return model
 
     def get_nncf_module_scopes(self) -> List[List[Scope]]:
@@ -760,6 +771,22 @@ class NNCFNetworkInterface(torch.nn.Module):
             return strip_quantized_model(self._model_ref)
         return self.compression_controller.strip(do_copy)
 
+    def _wrap_parameters(model: torch.nn.Module) -> None:
+        """
+        Wrap model parameters for tracing
+
+        :param model: A model whose parameters need to be wrapped for tracing
+        """
+        pass
+        # , name, param):
+        #     param.__class__ = TracedParameter
+        #     param.nncf_expire()
+        #     param.nncf_name = name
+        #     param.is_cacheable = True
+
+        # for name, param in model.named_parameters():
+        #     wrap_parameter(name, param)
+
 
 class NNCFNetworkMeta(type):
     """
@@ -779,32 +806,36 @@ class NNCFNetworkMeta(type):
         ignored_scopes: List[str] = None,
         target_scopes: List[str] = None,
         wrap_outputs_fn: WrapOutputsFnType = None,
+        replace_modules: bool = True,
+        trace_parameters=False,
     ) -> "NNCFNetwork":
         """
         This function plays the role of a "constructor" call in the `nncf_network = NNCFNetwork(original_model, ...)`
         syntax. *_scopes arguments are to be passed as string representation of either
         `nncf.common.graph.graph.NNCFNodeName` or `nncf.torch.dynamic_graph.scope.Scope` objects.
         :param original_model: The original model object to be extended with NNCF functionality.
-        :param input_info: A list of descriptors of each tensor input to the model. Will be used to properly generate
-        dummy inputs during internal forward calls of the original model for purposes of control flow graph building.
+        :param input_infos: A list of descriptors of each tensor input to the model. Will be used to properly generate
+            dummy inputs during internal forward calls of the original model for purposes of control flow graph building.
         :param dummy_forward_fn: A function to be called instead of the model's original forward function during
-        control flow graph building.
+            control flow graph building.
         :param wrap_inputs_fn: A user-defined function that will be called with the model's forward arguments at each
-        call of the NNCFNetwork object and within which the `nncf.torch.dynamic_graph.io_handling.nncf_model_input`
-        function is expected to be called upon each tensor among the arguments that is to be treated as an input tensor
-        to the model, thus overriding `input_infos`.
+            call of the NNCFNetwork object and within which the `nncf.torch.dynamic_graph.io_handling.nncf_model_input`
+            function is expected to be called upon each tensor among the arguments that is to be treated as an input tensor
+            to the model, thus overriding `input_infos`.
         :param scopes_without_shape_matching: A list of scopes in the model in which the activation tensor shapes will
-        not be considered for purposes of scope matching - this helps handle RNN-like cases.
+            not be considered for purposes of scope matching - this helps handle RNN-like cases.
         :param ignored_scopes: A list of scopes in the model for which NNCF handling should not be applied. Functions as
-        a "denylist". If left unspecified, nothing will be ignored.
+            a "denylist". If left unspecified, nothing will be ignored.
         :param target_scopes: A list of scopes in the model for which NNCF handling should be applied. Functions as
-        an "allowlist". If left unspecified, everything will be targeted.
+            an "allowlist". If left unspecified, everything will be targeted.
         :param wrap_outputs_fn: Same as `wrap_inputs_fn`, but for marking model outputs with
-        `nncf.torch.dynamic_graph.io_handling.nncf_model_output` calls.
+            `nncf.torch.dynamic_graph.io_handling.nncf_model_output` calls.
+        :param replace_modules: Whether to replace model modules with NNCF modules. Default is True.
+        :param trace_parameters: Whether to trace model parameters. Default is False.
         :return: The same object as passed in `original_model`, but with internal modules extended/replaced for
-        purposes of further NNCF compression, and its class dynamically extended with the `NNCFNetwork` as a base class.
-        The object will pass both isinstance(retval, original_model.__class__) and isinstance(retval, NNCFNetwork)
-        checks.
+            purposes of further NNCF compression, and its class dynamically extended with the `NNCFNetwork` as a base class.
+            The object will pass both isinstance(retval, original_model.__class__) and isinstance(retval, NNCFNetwork)
+            checks.
         """
         original_class = original_model.__class__
         original_model._nncf = NNCFNetworkInterface(
@@ -816,7 +847,9 @@ class NNCFNetworkMeta(type):
             ignored_scopes,
             target_scopes,
             wrap_outputs_fn,
-        )
+            replace_modules,
+            trace_parameters,
+        )  # pylint:disable=protected-access
         # The new class will also have an adjusted metaclass to avoid a "metaclass conflict" upon
         # class creation
         original_metaclass = type(original_model.__class__)

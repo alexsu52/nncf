@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, TypeVar
+from typing import Dict, List, Optional, Tuple, TypeVar
 
 import numpy as np
 
@@ -27,6 +27,8 @@ from nncf.common.tensor_statistics.statistic_point import StatisticPoint
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
+from nncf.openvino.graph.metatypes.openvino_metatypes import OVMatMulMetatype
+from nncf.openvino.graph.node_utils import get_matmul_channel_axes, get_weight_value
 from nncf.quantization.algorithms.algorithm import Algorithm
 from nncf.quantization.algorithms.channel_alignment.backend import ChannelAlignmentAlgoBackend
 from nncf.quantization.algorithms.channel_alignment.backend import LayoutDescriptor
@@ -70,7 +72,7 @@ class ChannelAlignment(Algorithm):
         self.subset_size = subset_size
         self.inplace_statistics = inplace_statistics
         self._backend_entity = None
-        self._quantile = 1e-4
+        self._quantile = 0.05
         self._algorithm_key = f"CA_{hash(self)}"
 
     @property
@@ -103,100 +105,134 @@ class ChannelAlignment(Algorithm):
         def filter_func(point: StatisticPoint) -> bool:
             return self._algorithm_key in point.algorithm_to_tensor_collectors and point.target_point == target_point
 
-        for conv_in, add_in, conv_out in track(self._get_node_pairs(graph), description="Channel alignment"):
-            target_point, node_in = self._get_target_point_and_node_in(conv_in, add_in)
+        nodes_to_smooth = self._get_nodes_to_smooth_data(graph)
+        max_value = 0
+        max_node_name = ""
+        l_magnitude = []
+        for node_data in track(nodes_to_smooth, description="Channel alignment"):
+            node_to_smooth = node_data["node_to_smooth"]
+            target_point = self._backend_entity.target_point(
+                TargetType.PRE_LAYER_OPERATION,
+                target_node_name=node_to_smooth.node_name,
+                port_id=node_data["input_act_port"],
+            )
             tensor_collectors = list(
-                statistic_points.get_algo_statistics_for_node(node_in.node_name, filter_func, self._algorithm_key)
+                statistic_points.get_algo_statistics_for_node(
+                    node_to_smooth.node_name, filter_func, self._algorithm_key
+                )
             )
             assert len(tensor_collectors) == 1
             stat = tensor_collectors[0].get_statistics()
             if stat.min_values is None or stat.max_values is None:
                 continue
 
-            conv_in_cont = ConvParamsContainer(conv_in, model, graph, self._backend_entity)
-            conv_out_cont = ConvParamsContainer(conv_out, model, graph, self._backend_entity)
+            # conv_in_cont = ConvParamsContainer(conv_in, model, graph, self._backend_entity)
+            # conv_out_cont = ConvParamsContainer(conv_out, model, graph, self._backend_entity)
 
             amean = (stat.max_values + stat.min_values) * 0.5
-            conv_in_cont.bias, conv_out_cont.bias = self._align_means(
-                conv_in_cont.bias,
-                conv_out_cont.bias,
-                conv_out_cont.weight,
-                amean,
-                conv_out_cont.dims,
+            l_magnitude.append((np.max(np.abs(amean)), np.std(amean), node_to_smooth.node_name, amean))
+
+            # if magnitude > max_value:
+            #     max_value = magnitude
+            #     max_node_name = node_to_smooth.node_name
+            #     print(f"{max_node_name}: {max_value}, {np.std(amean)}")
+
+            weights_port_id = node_to_smooth.layer_attributes.get_const_port_ids()[0]
+            input_transpose = node_to_smooth.layer_attributes.input_attributes["transpose"]
+            weights_transpose = node_to_smooth.layer_attributes.constant_attributes[weights_port_id]["transpose"]
+
+            matmul_weights = get_weight_value(node_to_smooth, model, weights_port_id)
+
+            in_bias, out_bias = self._align_means(
+                amean, matmul_weights, input_transpose, weights_transpose, weights_port_id
             )
 
-            ascale = (stat.max_values - stat.min_values).astype(np.float32)
-            eps = np.finfo(ascale.dtype).eps
-            if (ascale > eps).any():
-                conv_in_cont.weight, conv_out_cont.weight, conv_in_cont.bias = self._align_scales(
-                    conv_in_cont.weight,
-                    conv_out_cont.weight,
-                    conv_in_cont.bias,
-                    ascale,
-                    conv_in_cont.dims,
-                    conv_out_cont.dims,
-                    eps,
-                )
-
             command_creator = CommandCreatorFactory.create(model)
-            for container in [conv_in_cont, conv_out_cont]:
-                if container.stated_weight.is_modified():
-                    transformation_layout.register(
-                        command_creator.create_command_to_update_weight(
-                            container.op, container.weight, container.weight_port_id
-                        )
-                    )
+            in_command = command_creator.create_command_to_insert_bias(
+                node_to_smooth, in_bias, TargetType.PRE_LAYER_OPERATION
+            )
+            out_command = command_creator.create_command_to_insert_bias(
+                node_to_smooth, out_bias, TargetType.POST_LAYER_OPERATION
+            )
+            transformation_layout.register(in_command)
+            transformation_layout.register(out_command)
 
-                if container.stated_bias.is_modified():
-                    if container.bias_op_exist():
-                        command = command_creator.create_command_to_update_bias(container.op, container.bias, graph)
-                    else:
-                        command = command_creator.create_command_to_insert_bias(container.op, container.bias)
-                    transformation_layout.register(command)
+        l_magnitude.sort(key=lambda tup: tup[0])
+        for magnitude, std, name, amean in l_magnitude:
+            print(f"{name}: {magnitude}, {std}")
 
         transformed_model = model_transformer.transform(transformation_layout)
         return transformed_model
 
     @staticmethod
     def _align_means(
-        bias_in_value: np.ndarray,
-        bias_out_value: np.ndarray,
-        conv_out_value: np.ndarray,
         amean: np.ndarray,
-        conv_out_descr: LayoutDescriptor,
+        matmul_weights: np.ndarray,
+        input_transpose,
+        weights_transpose,
+        weights_port_id: int,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Function which calculates new add_in_value and add_out_value
-        in ChannelAlignment pattern, so output activations of the second convolution bias
-        are the same, but the first convolution bias is shifted with minus by amean value.
+        updated_add_in_value = (-1) * amean
 
-        :param bias_in_value: Bias of the first convolution in the ChannelAlignment pattern.
-        :param bias_out_value: Bias of the second convolution in the ChannelAlignment pattern.
-        :param amean: Mean value to shift first and second convolutions biases.
-        :param conv_out_descr: The second convolution weights layout descriptor.
-        """
-        updated_add_in_value = bias_in_value - amean.reshape(bias_in_value.shape)
+        if input_transpose:
+            axes = range(len(updated_add_in_value.shape))
+            axes[-2], axes[-1] = axes[-1], axes[-2]
+            updated_add_in_value = np.transpose(updated_add_in_value, axes)
 
-        weight_dims = conv_out_value.ndim
-        updated_conv_out_value = conv_out_value
-        if weight_dims > 2:
-            axes = list(range(weight_dims))
-            axes.remove(conv_out_descr.conv_weight_in_channels_dim)
-            axes.remove(conv_out_descr.conv_weight_out_channels_dim)
-            updated_conv_out_value = np.sum(conv_out_value, axis=tuple(axes))
+        if weights_transpose:
+            axes = list(range(len(matmul_weights.shape)))
+            axes[-2], axes[-1] = axes[-1], axes[-2]
+            matmul_weights = np.transpose(matmul_weights, axes)
 
-        out_channel_dim, in_channel_dim = 0, 1
-        if conv_out_descr.conv_weight_out_channels_dim > conv_out_descr.conv_weight_in_channels_dim:
-            out_channel_dim, in_channel_dim = in_channel_dim, out_channel_dim
+        if weights_port_id == 0:
+            shift = np.matmul(matmul_weights, updated_add_in_value)
+        else:
+            shift = np.matmul(updated_add_in_value, matmul_weights)
 
-        updated_conv_out_value = np.transpose(
-            updated_conv_out_value,
-            (out_channel_dim, in_channel_dim),
-        )
-        shift = updated_conv_out_value.dot(amean.reshape(updated_conv_out_value.shape[1]))
+        shift = (-1) * shift
 
-        updated_add_out_value = bias_out_value + shift.reshape(bias_out_value.shape)
-        return updated_add_in_value, updated_add_out_value
+        return updated_add_in_value, shift
+
+    # @staticmethod
+    # def _align_means(
+    #     bias_in_value: np.ndarray,
+    #     bias_out_value: np.ndarray,
+    #     conv_out_value: np.ndarray,
+    #     amean: np.ndarray,
+    #     conv_out_descr: LayoutDescriptor,
+    # ) -> Tuple[np.ndarray, np.ndarray]:
+    #     """
+    #     Function which calculates new add_in_value and add_out_value
+    #     in ChannelAlignment pattern, so output activations of the second convolution bias
+    #     are the same, but the first convolution bias is shifted with minus by amean value.
+
+    #     :param bias_in_value: Bias of the first convolution in the ChannelAlignment pattern.
+    #     :param bias_out_value: Bias of the second convolution in the ChannelAlignment pattern.
+    #     :param amean: Mean value to shift first and second convolutions biases.
+    #     :param conv_out_descr: The second convolution weights layout descriptor.
+    #     """
+    #     updated_add_in_value = bias_in_value - amean.reshape(bias_in_value.shape)
+
+    #     weight_dims = conv_out_value.ndim
+    #     updated_conv_out_value = conv_out_value
+    #     if weight_dims > 2:
+    #         axes = list(range(weight_dims))
+    #         axes.remove(conv_out_descr.conv_weight_in_channels_dim)
+    #         axes.remove(conv_out_descr.conv_weight_out_channels_dim)
+    #         updated_conv_out_value = np.sum(conv_out_value, axis=tuple(axes))
+
+    #     out_channel_dim, in_channel_dim = 0, 1
+    #     if conv_out_descr.conv_weight_out_channels_dim > conv_out_descr.conv_weight_in_channels_dim:
+    #         out_channel_dim, in_channel_dim = in_channel_dim, out_channel_dim
+
+    #     updated_conv_out_value = np.transpose(
+    #         updated_conv_out_value,
+    #         (out_channel_dim, in_channel_dim),
+    #     )
+    #     shift = updated_conv_out_value.dot(amean.reshape(updated_conv_out_value.shape[1]))
+
+    #     updated_add_out_value = bias_out_value + shift.reshape(bias_out_value.shape)
+    #     return updated_add_in_value, updated_add_out_value
 
     @staticmethod
     def _align_scales(
@@ -358,6 +394,38 @@ class ChannelAlignment(Algorithm):
             pairs.append((conv_in, add_in, conv_out))
         return pairs
 
+    def _get_nodes_to_smooth_data(self, nncf_graph: NNCFGraph) -> List[Dict]:
+        """
+        Collects layers whose activations will be smoothed.
+
+        :param nncf_graph: NNCFGraph instance.
+        :return: List with the data for each layer.
+        """
+        nodes_with_weights = nncf_graph.get_nodes_by_metatypes(self._backend_entity.weighted_metatypes)
+        nodes_to_smooth_data = []
+
+        for node_with_weight in nodes_with_weights:
+            if not self._backend_entity.is_node_with_weights(node_with_weight):
+                continue
+
+            # if "down_proj" not in node_with_weight.node_name:
+            #     continue
+
+            ports_map = self._backend_entity.get_input_ports_map(node_with_weight, nncf_graph)
+            weight_node = nncf_graph.get_input_edges(node_with_weight)[ports_map["weight"]].from_node
+
+            # Skipping shared weights
+            if len(nncf_graph.get_next_nodes(weight_node)) > 1:
+                continue
+
+            nodes_to_smooth_data.append(
+                {
+                    "node_to_smooth": node_with_weight,
+                    "input_act_port": ports_map["activation"],
+                }
+            )
+        return nodes_to_smooth_data
+
     def _get_target_point_and_node_in(self, conv_in, add_in) -> Tuple[TargetPoint, NNCFNode]:
         node_in = conv_in if add_in is None else add_in
         input_port_id, _ = self._backend_entity.get_activation_port_ids_for_node(node_in)
@@ -366,15 +434,47 @@ class ChannelAlignment(Algorithm):
             node_in,
         )
 
+    # def get_statistic_points(self, model: TModel, graph: NNCFGraph) -> StatisticPointsContainer:
+    #     self._set_backend_entity(model)
+
+    #     statistic_container = StatisticPointsContainer()
+    #     for conv_in, add_in, _ in self._get_node_pairs(graph):
+    #         target_point, node_in = self._get_target_point_and_node_in(conv_in, add_in)
+    #         channel_axis = conv_in.metatype.output_channel_axis
+    #         reduction_axes = list(range(len(graph.get_output_edges(node_in)[0].tensor_shape)))
+    #         reduction_axes.remove(channel_axis)
+
+    #         statistic_collector = self._backend_entity.get_statistic_collector(
+    #             tuple(reduction_axes), self._quantile, self.subset_size, self.inplace_statistics
+    #         )
+    #         statistic_container.add_statistic_point(
+    #             StatisticPoint(
+    #                 target_point=target_point,
+    #                 tensor_collector=statistic_collector,
+    #                 algorithm=self._algorithm_key,
+    #             )
+    #         )
+
+    #     return statistic_container
+
     def get_statistic_points(self, model: TModel, graph: NNCFGraph) -> StatisticPointsContainer:
         self._set_backend_entity(model)
 
         statistic_container = StatisticPointsContainer()
-        for conv_in, add_in, _ in self._get_node_pairs(graph):
-            target_point, node_in = self._get_target_point_and_node_in(conv_in, add_in)
-            channel_axis = conv_in.metatype.output_channel_axis
-            reduction_axes = list(range(len(graph.get_output_edges(node_in)[0].tensor_shape)))
-            reduction_axes.remove(channel_axis)
+        for node_data in self._get_nodes_to_smooth_data(graph):
+            node_to_smooth = node_data["node_to_smooth"]
+            target_point = self._backend_entity.target_point(
+                TargetType.PRE_LAYER_OPERATION,
+                target_node_name=node_to_smooth.node_name,
+                port_id=node_data["input_act_port"],
+            )
+            if node_to_smooth.metatype != OVMatMulMetatype:
+                raise RuntimeError("not matmul")
+
+            ndims = len(graph.get_output_edges(node_to_smooth)[target_point.port_id].tensor_shape)
+            transpose = node_to_smooth.layer_attributes.input_attributes["transpose"]
+            channel_axes = get_matmul_channel_axes(target_point.port_id, ndims, transpose)
+            reduction_axes = tuple(channel_axes)
 
             statistic_collector = self._backend_entity.get_statistic_collector(
                 tuple(reduction_axes), self._quantile, self.subset_size, self.inplace_statistics

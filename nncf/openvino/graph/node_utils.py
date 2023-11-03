@@ -44,6 +44,7 @@ def is_node_with_bias(node: NNCFNode, nncf_graph: NNCFGraph) -> bool:
     if node.metatype not in OPERATIONS_WITH_BIAS:
         return False
 
+    return True
     add_node = nncf_graph.get_next_nodes(node)[0]
     if add_node.metatype != OVAddMetatype:
         return False
@@ -93,7 +94,11 @@ def get_bias_value(node_with_bias: NNCFNode, nncf_graph: NNCFGraph, model: ov.Mo
     ops_dict = {op.get_friendly_name(): op for op in model.get_ops()}
 
     add_node = nncf_graph.get_next_nodes(node_with_bias)[0]
+    if add_node.metatype != OVAddMetatype:
+        return None
     bias_constant = get_node_with_bias_value(add_node, nncf_graph)
+    if bias_constant is None:
+        return None
     ov_bias_constant = ops_dict[bias_constant.node_name]
     return get_const_value(ov_bias_constant)
 

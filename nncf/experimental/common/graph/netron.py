@@ -31,7 +31,7 @@ class Tags:
 
 
 class PortDesc:
-    def __init__(self, port_id: str, shape: Optional[List[int]] = None, precision: str = None):
+    def __init__(self, port_id: str, shape: Optional[List[int]] = None, precision: str = "fp32"):
         self.port_id = port_id
         if shape is None:
             shape = []

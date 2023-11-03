@@ -476,20 +476,32 @@ class OVModelTransformer(ModelTransformer):
         """
         name_to_node_mapping = OVModelTransformer._get_name_to_node_mapping(model)
         for transformation in transformations:
-            node_name = transformation.target_point.target_node_name
-            node = name_to_node_mapping[node_name]
-            # Since layers that may have biases mostly are Convolution or MatMul variations,
-            # we may use only 0 output port.
-            node_output_port = node.output(transformation.target_point.port_id)
-            node_output_source_ports = node_output_port.get_target_inputs()
+            if transformation.target_point._target_type == TargetType.PRE_LAYER_OPERATION:
+                node_name = transformation.target_point.target_node_name
+                node = name_to_node_mapping[node_name]
+                node_input_port = node.input(transformation.target_point.port_id)
+                input_node_output = node_input_port.get_source_output()
 
-            bias_const_node = opset.constant(transformation.bias_value, dtype=node.get_element_type().to_dtype())
-            bias_const_output_port = bias_const_node.output(0)
+                bias_const_node = opset.constant(transformation.bias_value, dtype=node.get_element_type().to_dtype())
+                bias_const_output_port = bias_const_node.output(0)
+                add_node = opset.add(input_node_output, bias_const_output_port, name=f"{node_name}/nncf_pre_null_bias_")
 
-            add_node = opset.add(node_output_port, bias_const_output_port, name=f"{node_name}/nncf_null_bias_")
+                node_input_port.replace_source_output(add_node.output(0))
+            else:
+                node_name = transformation.target_point.target_node_name
+                node = name_to_node_mapping[node_name]
+                # Since layers that may have biases mostly are Convolution or MatMul variations,
+                # we may use only 0 output port.
+                node_output_port = node.output(transformation.target_point.port_id)
+                node_output_source_ports = node_output_port.get_target_inputs()
 
-            for node_output_source_port in node_output_source_ports:
-                node_output_source_port.replace_source_output(add_node.output(0))
+                bias_const_node = opset.constant(transformation.bias_value, dtype=node.get_element_type().to_dtype())
+                bias_const_output_port = bias_const_node.output(0)
+
+                add_node = opset.add(node_output_port, bias_const_output_port, name=f"{node_name}/nncf_post_null_bias_")
+
+                for node_output_source_port in node_output_source_ports:
+                    node_output_source_port.replace_source_output(add_node.output(0))
 
         return model
 

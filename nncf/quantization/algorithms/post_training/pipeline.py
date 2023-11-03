@@ -78,16 +78,16 @@ def create_ptq_pipeline(
     # Build the post-training quantization pipeline.
     pipeline_steps = []
 
+    # Add the `ChannelAlignment` algorithm as the second step of the pipeline.
+    if not advanced_parameters.disable_channel_alignment:
+        pipeline_steps.append([ChannelAlignment(subset_size, advanced_parameters.inplace_statistics)])
+
     # Add the `SmoothQuant` algorithm as the first step of the pipeline.
     # It is added only for `ModelType.TRANSFORMER`.
     if model_type == ModelType.TRANSFORMER and advanced_parameters.smooth_quant_alpha >= 0:
         pipeline_steps.append(
             [SmoothQuant(subset_size, advanced_parameters.inplace_statistics, advanced_parameters.smooth_quant_alpha)]
         )
-
-    # Add the `ChannelAlignment` algorithm as the second step of the pipeline.
-    if not advanced_parameters.disable_channel_alignment:
-        pipeline_steps.append([ChannelAlignment(subset_size, advanced_parameters.inplace_statistics)])
 
     # Add the `MinMaxQuantization` algorithm as the third step of the pipeline.
     pipeline_steps.append(

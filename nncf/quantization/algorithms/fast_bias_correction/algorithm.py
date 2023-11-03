@@ -158,7 +158,8 @@ class FastBiasCorrection(Algorithm):
             sub_input_name, sub_output_name = self._backend_entity.get_sub_input_output_names(extracted_model)
 
             channel_axis = node.metatype.output_channel_axis
-            if bias_value.ndim > 1:
+
+            if bias_value is not None and bias_value.ndim > 1:
                 # Make index positive
                 channel_axis = range(bias_value.ndim)[channel_axis]
             input_blob = self._backend_entity.create_input_data(input_shape, input_fp, sub_input_name, channel_axis)
@@ -171,19 +172,28 @@ class FastBiasCorrection(Algorithm):
             )
 
             bias_shift = self._reshape_bias_shift(bias_shift, bias_value, channel_axis)
-            updated_bias = bias_value + bias_shift
+            if bias_value is None:
+                updated_bias = bias_shift
+            else:
+                updated_bias = bias_value + bias_shift
             magnitude = self._get_bias_shift_magnitude(bias_value, updated_bias)
 
             if magnitude < self.threshold:
                 nncf_logger.debug(f"{node_name} bias would be changed")
-                node_and_new_bias_value.append((node, updated_bias))
+                node_and_new_bias_value.append((node, bias_value, updated_bias))
             else:
                 nncf_logger.debug(f"{node_name} bias skipped by threshold. Magnitude: {magnitude}")
 
         # Create commands of bias correction and apply them to the model.
         transformation_layout = TransformationLayout()
-        for node, bias_value in node_and_new_bias_value:
-            transformation_layout.register(self._backend_entity.create_bias_correction_command(node, bias_value, graph))
+        for node, bias_value, updated_bias in node_and_new_bias_value:
+            print(node.node_name)
+            if bias_value is None:
+                transformation_layout.register(self._backend_entity.insert_bias_correction_command(node, updated_bias))
+            else:
+                transformation_layout.register(
+                    self._backend_entity.create_bias_correction_command(node, updated_bias, graph)
+                )
         transformed_model = model_transformer.transform(transformation_layout)
 
         return transformed_model
@@ -198,7 +208,9 @@ class FastBiasCorrection(Algorithm):
         :return: Magnitude between original and updated bias values.
         """
         bias_shift_magnitude = inf
-        if fns.count_nonzero(current_bias_value == 0) == 0:
+        if current_bias_value is None:
+            bias_shift_magnitude = fns.max(fns.abs(updated_bias_value))
+        elif fns.count_nonzero(current_bias_value == 0) == 0:
             bias_shift_magnitude = fns.max(fns.abs((updated_bias_value - current_bias_value) / current_bias_value))
         return bias_shift_magnitude
 
@@ -213,7 +225,7 @@ class FastBiasCorrection(Algorithm):
 
         :return TTensor: Updated bias_shift.
         """
-        if bias_value.ndim > 1:
+        if bias_value is not None and bias_value.ndim > 1:
             new_shape = [1] * bias_value.ndim
             new_shape[channel_axis] = bias_shift.shape[0]
             bias_shift = bias_shift.reshape(new_shape)

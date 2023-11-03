@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import openvino.runtime as ov
@@ -17,6 +17,7 @@ import openvino.runtime as ov
 from nncf.common.graph import NNCFGraph
 from nncf.common.graph import NNCFNode
 from nncf.common.graph.layer_attributes import ConvolutionLayerAttributes
+from nncf.common.graph.operator_metatypes import OperatorMetatype
 from nncf.common.graph.transformations.commands import TargetType
 from nncf.common.tensor_statistics.collectors import TensorStatisticCollectorBase
 from nncf.experimental.common.tensor_statistics.collectors import MedianAggregator
@@ -41,6 +42,26 @@ from nncf.quantization.algorithms.channel_alignment.backend import LayoutDescrip
 
 
 class OVChannelAlignmentAlgoBackend(ChannelAlignmentAlgoBackend):
+    @property
+    def weighted_metatypes(self) -> List[OperatorMetatype]:
+        return [OVMatMulMetatype]
+
+    @staticmethod
+    def is_node_with_weights(node: NNCFNode) -> bool:
+        return node.layer_attributes and node.layer_attributes.constant_attributes
+
+    @staticmethod
+    def get_input_ports_map(node: NNCFNode, nncf_graph: NNCFGraph) -> Dict[str, int]:
+        weight_ports = node.layer_attributes.get_const_port_ids()
+        activation_ports = [
+            e.input_port_id for e in nncf_graph.get_input_edges(node) if e.input_port_id not in weight_ports
+        ]
+
+        if len(weight_ports) != 1 or len(activation_ports) != 1:
+            raise RuntimeError(f"Too many weight or activation ports for {node.node_name} node")
+
+        return {"activation": activation_ports[0], "weight": weight_ports[0]}
+
     @staticmethod
     def target_point(target_type: TargetType, target_node_name: str, port_id: int) -> OVTargetPoint:
         return OVTargetPoint(target_type, target_node_name, port_id)

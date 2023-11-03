@@ -563,6 +563,7 @@ class NNCFGraph:
 
     def visualize_graph(self, path: str):
         out_graph = self._get_graph_for_visualization()
+
         write_dot_graph(out_graph, path)
 
     def get_graph_for_structure_analysis(self, extended: bool = False) -> nx.DiGraph:
@@ -624,7 +625,7 @@ class NNCFGraph:
         out_graph = nx.DiGraph()
         for node in self.get_all_nodes():
             attrs_node = {}
-            attrs_node["label"] = f"{node.node_id} {node.node_name}"
+            attrs_node["label"] = f'"{node.node_id} {node.node_name}"'
             node_key = self.get_node_key_by_id(node.node_id)
             out_graph.add_node(node_key, **attrs_node)
 

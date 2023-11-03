@@ -54,8 +54,10 @@ class OVCommandCreator(CommandCreator):
         return OVWeightUpdateCommand(target_point, weight_value)
 
     @staticmethod
-    def create_command_to_insert_bias(node_without_bias: NNCFNode, bias_value: np.ndarray) -> OVBiasInsertionCommand:
-        target_point = OVTargetPoint(TargetType.POST_LAYER_OPERATION, node_without_bias.node_name, 0)
+    def create_command_to_insert_bias(
+        node_without_bias: NNCFNode, bias_value: np.ndarray, target_type=TargetType.POST_LAYER_OPERATION
+    ) -> OVBiasInsertionCommand:
+        target_point = OVTargetPoint(target_type, node_without_bias.node_name, 0)
         return OVBiasInsertionCommand(target_point, bias_value)
 
     @staticmethod

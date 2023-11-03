@@ -521,6 +521,13 @@ class MinMaxQuantization(Algorithm):
             self._backend_entity.read_variable_metatypes,
         )
 
+        # from nncf.experimental.common.graph.netron import save_for_netron
+
+        # save_for_netron(inference_nncf_graph, "inference_original_graph.xml")
+        # inference_nncf_graph.visualize_graph("inference_original_graph.dot")
+        # print("done")
+        # exit()
+
         quantizer_setup = self._get_quantizer_setup(nncf_graph, inference_nncf_graph, hw_patterns, ignored_patterns)
         self._apply_model_type_pass(self._model_type, quantizer_setup, nncf_graph)
         self._apply_device_pass(self._target_device, quantizer_setup, inference_nncf_graph)

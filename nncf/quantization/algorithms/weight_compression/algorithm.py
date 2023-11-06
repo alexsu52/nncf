@@ -90,11 +90,9 @@ class WeightCompression(Algorithm):
         """
         model_backend = get_backend(model)
         if model_backend == BackendType.OPENVINO:
-            from nncf.quantization.algorithms.weights_compression.openvino_backend import (
-                OVWeightsCompressionAlgoBackend,
-            )
+            from nncf.quantization.algorithms.weight_compression.openvino_backend import OVWeightCompressionAlgoBackend
 
-            self._backend_entity = OVWeightsCompressionAlgoBackend()
+            self._backend_entity = OVWeightCompressionAlgoBackend()
         else:
             raise RuntimeError(
                 "Cannot return backend-specific entity because {} is not supported!".format(model_backend.value)

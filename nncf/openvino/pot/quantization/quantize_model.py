@@ -26,7 +26,7 @@ from nncf.openvino.pot.engine import OVEngine
 from nncf.openvino.pot.quantization.accuracy_aware import NMSEBasedAccuracyAware
 from nncf.openvino.pot.telemetry_extractors import POTImplementation
 from nncf.openvino.quantization.backend_parameters import BackendParameters
-from nncf.openvino.quantization.backend_parameters import is_weights_compression_needed
+from nncf.openvino.quantization.backend_parameters import is_weight_compression_needed
 from nncf.parameters import DropType
 from nncf.parameters import ModelType
 from nncf.parameters import TargetDevice
@@ -381,7 +381,7 @@ def quantize_impl(
     compressed_model = pipeline.run(pot_model)
     quantized_model = _convert_compressed_model_to_openvino_model(compressed_model)
 
-    if is_weights_compression_needed(advanced_parameters):
+    if is_weight_compression_needed(advanced_parameters):
         compress_quantize_weights_transformation(quantized_model)
 
     return quantized_model
@@ -517,7 +517,7 @@ def quantize_with_accuracy_control_impl(
     compressed_model = pipeline.run(pot_model)
     quantized_model = _convert_compressed_model_to_openvino_model(compressed_model)
 
-    if is_weights_compression_needed(advanced_quantization_parameters):
+    if is_weight_compression_needed(advanced_quantization_parameters):
         compress_quantize_weights_transformation(quantized_model)
 
     return quantized_model

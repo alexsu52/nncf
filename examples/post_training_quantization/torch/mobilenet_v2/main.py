@@ -12,6 +12,7 @@
 import os
 import re
 import subprocess
+import sys
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -112,8 +113,13 @@ val_data_loader = torch.utils.data.DataLoader(val_dataset)
 torch_model = models.mobilenet_v2(num_classes=DATASET_CLASSES)
 torch_model = load_checkpoint(torch_model)
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-torch_model.to(device)
+torch_model.to(device).to(torch.bfloat16)
 torch_model.eval()
+dummy_input = torch.randn(1, 3, 224, 224).bfloat16()
+torch.onnx.export(torch_model.cpu(), dummy_input, f"{ROOT}/mobilenet_v2_bf16.onnx")
+ov_model = ov.Core().read_model(f"{ROOT}/mobilenet_v2_bf16.onnx")
+ov.save_model(ov_model, f"{ROOT}/mobilenet_v2_bf16.xml", compress_to_fp16=False)
+
 
 ###############################################################################
 # Quantize a PyTorch model
@@ -124,10 +130,15 @@ torch_model.eval()
 # >> for data_item in val_loader:
 # >>    model(transform_fn(data_item, device))
 
+import numpy as np
+
 
 def transform_fn(data_item: Tuple[torch.Tensor, int], device: torch.device) -> torch.Tensor:
     images, _ = data_item
-    return images.to(device)
+    images = images.bfloat16()
+    buffer = images.data_ptr().to_bytes(2 * 3 * 224 * 224, sys.byteorder)
+    array = np.ndarray(shape=images.shape, dtype=np.float16, buffer=buffer)
+    return ov.Tensor(array, ov.Shape(images.shape), ov.Type.bf16)
 
 
 # The calibration dataset is a small, no label, representative dataset
@@ -141,14 +152,18 @@ def transform_fn(data_item: Tuple[torch.Tensor, int], device: torch.device) -> t
 # (default: 300 samples) of the calibration dataset.
 
 calibration_dataset = nncf.Dataset(val_data_loader, partial(transform_fn, device=device))
-torch_quantized_model = nncf.quantize(torch_model, calibration_dataset)
+ov_quantized_model = nncf.quantize(
+    ov_model,
+    calibration_dataset,
+    advanced_parameters=nncf.AdvancedQuantizationParameters(backend_params={"compress_weights": False}),
+)
 
 ###############################################################################
 # Benchmark performance, calculate compression rate and validate accuracy
 
-dummy_input = torch.randn(1, 3, 224, 224)
-ov_model = ov.convert_model(torch_model.cpu(), example_input=dummy_input)
-ov_quantized_model = ov.convert_model(torch_quantized_model.cpu(), example_input=dummy_input)
+# dummy_input = torch.randn(1, 3, 224, 224).bfloat16()
+# ov_model = ov.convert_model(torch_model.cpu(), example_input=dummy_input)
+# ov_quantized_model = ov.convert_model(torch_quantized_model.cpu(), example_input=dummy_input)
 
 fp32_ir_path = f"{ROOT}/mobilenet_v2_fp32.xml"
 ov.save_model(ov_model, fp32_ir_path, compress_to_fp16=False)
@@ -160,21 +175,21 @@ ov.save_model(ov_quantized_model, int8_ir_path, compress_to_fp16=False)
 print(f"[2/7] Save INT8 model: {int8_ir_path}")
 int8_model_size = get_model_size(int8_ir_path, verbose=True)
 
-print("[3/7] Benchmark FP32 model:")
-fp32_fps = run_benchmark(fp32_ir_path, shape=[1, 3, 224, 224], verbose=True)
-print("[4/7] Benchmark INT8 model:")
-int8_fps = run_benchmark(int8_ir_path, shape=[1, 3, 224, 224], verbose=True)
+# print("[3/7] Benchmark FP32 model:")
+# fp32_fps = run_benchmark(fp32_ir_path, shape=[1, 3, 224, 224], verbose=True)
+# print("[4/7] Benchmark INT8 model:")
+# int8_fps = run_benchmark(int8_ir_path, shape=[1, 3, 224, 224], verbose=True)
 
-print("[5/7] Validate OpenVINO FP32 model:")
-fp32_top1 = validate(ov_model, val_data_loader)
-print(f"Accuracy @ top1: {fp32_top1:.3f}")
+# print("[5/7] Validate OpenVINO FP32 model:")
+# fp32_top1 = validate(ov_model, val_data_loader)
+# print(f"Accuracy @ top1: {fp32_top1:.3f}")
 
-print("[6/7] Validate OpenVINO INT8 model:")
-int8_top1 = validate(ov_quantized_model, val_data_loader)
-print(f"Accuracy @ top1: {int8_top1:.3f}")
+# print("[6/7] Validate OpenVINO INT8 model:")
+# int8_top1 = validate(ov_quantized_model, val_data_loader)
+# print(f"Accuracy @ top1: {int8_top1:.3f}")
 
-print("[7/7] Report:")
-print(f"Accuracy drop: {fp32_top1 - int8_top1:.3f}")
-print(f"Model compression rate: {fp32_model_size / int8_model_size:.3f}")
-# https://docs.openvino.ai/latest/openvino_docs_optimization_guide_dldt_optimization_guide.html
-print(f"Performance speed up (throughput mode): {int8_fps / fp32_fps:.3f}")
+# print("[7/7] Report:")
+# print(f"Accuracy drop: {fp32_top1 - int8_top1:.3f}")
+# print(f"Model compression rate: {fp32_model_size / int8_model_size:.3f}")
+# # https://docs.openvino.ai/latest/openvino_docs_optimization_guide_dldt_optimization_guide.html
+# print(f"Performance speed up (throughput mode): {int8_fps / fp32_fps:.3f}")

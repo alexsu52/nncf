@@ -371,8 +371,8 @@ You may also use one of the Dockerfiles in the [docker](./docker) directory to b
 
 ### System requirements
 
-- Ubuntu\* 18.04 or later (64-bit)
-- Python\* 3.7 or later
+- Ubuntu\* 20.04 or later (64-bit)
+- Python\* 3.8 or later
 - Supported frameworks:
   - PyTorch\* >=2.0, <2.2
   - TensorFlow\* >=2.8.4, <=2.12.1

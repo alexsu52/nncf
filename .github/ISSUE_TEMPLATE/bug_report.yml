@@ -26,8 +26,8 @@ body:
         RAM                 32.00 GB
         CPU                 Intel(R) Core(TM) i9-10980XE CPU @ 3.00GHz
         CUDA                None
-      validations:
-        required: true
+    validations:
+      required: true
 
   - type: textarea
     attributes:

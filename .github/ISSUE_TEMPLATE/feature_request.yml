@@ -11,12 +11,12 @@ body:
       required: true
 
   - type: textarea
-      attributes:
-        label: Feature Use Case
-        description: What is the use case of the feature you are proposing?
-        placeholder: What is the new feature use case? How will it be useful?
-      validations:
-        required: false
+    attributes:
+      label: Feature Use Case
+      description: What is the use case of the feature you are proposing?
+      placeholder: What is the new feature use case? How will it be useful?
+    validations:
+      required: false
       
   - type: checkboxes
     attributes:

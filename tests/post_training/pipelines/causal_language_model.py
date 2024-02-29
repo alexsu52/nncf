@@ -40,6 +40,9 @@ class CausalLMHF(PTQTestPipeline):
         return transform_func
 
     def prepare_calibration_dataset(self):
+        if self.batch_size > 1:
+            print("Batch size > 1 is not supported for causal language models. Batch size = 1 is set.")
+            self.batch_size = 1
         quantizer = OVQuantizer.from_pretrained(self.model_hf)
 
         num_samples = self.compression_params.get("subset_size", 300)

@@ -101,6 +101,8 @@ def parse_args():
 
     parser.add_argument("--impl", help="NNCF OpenVINO backend implementation.", choices=["pot", "native"], default=None)
 
+    parser.add_argument("--batch_size", help="Batch size", type=int, default=1)
+
     return parser.parse_args()
 
 
@@ -884,6 +886,7 @@ class ACDattasetWrapper:
 
     def __init__(self, model_evaluator):
         self.model_evaluator = model_evaluator
+        self.batch_size = self.model_evaluator.dataset.batch
 
     def __iter__(self):
         for sequence in self.model_evaluator.dataset:
@@ -1032,6 +1035,13 @@ def filter_configuration(config: Config) -> Config:
     return config
 
 
+def update_config(accuracy_checker_config: Config, batch_size: int) -> None:
+    for model in accuracy_checker_config["models"]:
+        for dataset in model["datasets"]:
+            print(f"Updated batch size value to {batch_size}")
+            dataset["batch"] = batch_size
+
+
 def main():
     args = parse_args()
     if args.impl is not None:
@@ -1042,6 +1052,7 @@ def main():
     xml_path, bin_path = get_model_paths(config.model)
     accuracy_checker_config = get_accuracy_checker_config(config.engine)
     nncf_algorithms_config = get_nncf_algorithms_config(config.compression, args.output_dir)
+    update_config(accuracy_checker_config, args.batch_size)
 
     set_log_file(f"{args.output_dir}/log.txt")
     output_dir = os.path.join(args.output_dir, "optimized")

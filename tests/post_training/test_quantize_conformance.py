@@ -45,6 +45,11 @@ def fixture_no_eval(pytestconfig):
     return pytestconfig.getoption("no_eval")
 
 
+@pytest.fixture(scope="session", name="batch_size")
+def fixture_batch_size(pytestconfig):
+    return pytestconfig.getoption("batch_size")
+
+
 @pytest.fixture(scope="session", name="subset_size")
 def fixture_subset_size(pytestconfig):
     return pytestconfig.getoption("subset_size")
@@ -196,6 +201,7 @@ def test_ptq_quantization(
     output_dir: Path,
     ptq_result_data: Dict[str, RunInfo],
     no_eval: bool,
+    batch_size: int,
     run_fp32_backend: bool,
     run_torch_cuda_backend: bool,
     subset_size: Optional[int],
@@ -215,7 +221,13 @@ def test_ptq_quantization(
         pipeline_cls = test_model_param["pipeline_cls"]
         pipeline_kwargs = create_pipeline_kwargs(test_model_param, subset_size, test_case_name, ptq_reference_data)
         pipeline_kwargs.update(
-            {"output_dir": output_dir, "data_dir": data_dir, "no_eval": no_eval, "run_benchmark_app": run_benchmark_app}
+            {
+                "output_dir": output_dir,
+                "data_dir": data_dir,
+                "no_eval": no_eval,
+                "run_benchmark_app": run_benchmark_app,
+                "batch_size": batch_size,
+            }
         )
         pipeline: BaseTestPipeline = pipeline_cls(**pipeline_kwargs)
         pipeline.run()
@@ -271,7 +283,12 @@ def test_weight_compression(
         pipeline_cls = test_model_param["pipeline_cls"]
         pipeline_kwargs = create_pipeline_kwargs(test_model_param, subset_size, test_case_name, wc_reference_data)
         pipeline_kwargs.update(
-            {"output_dir": output_dir, "data_dir": data_dir, "no_eval": no_eval, "run_benchmark_app": run_benchmark_app}
+            {
+                "output_dir": output_dir,
+                "data_dir": data_dir,
+                "no_eval": no_eval,
+                "run_benchmark_app": run_benchmark_app,
+            }
         )
         pipeline: BaseTestPipeline = pipeline_cls(**pipeline_kwargs)
         pipeline.run()

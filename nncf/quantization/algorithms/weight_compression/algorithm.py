@@ -514,7 +514,7 @@ class WeightCompression(Algorithm):
         statistics_aggregator = StatisticsAggregatorFactory.create(model, dataset)
         statistics_aggregator.register_statistic_points(statistic_container)
 
-        if self._gptq:
+        if self._gptq and not self._awq:
             self._gptq_statistics = self._gptq_algo.get_statistic_points(
                 model, graph, nodes_to_compress, self._backend_entity
             )

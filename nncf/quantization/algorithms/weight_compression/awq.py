@@ -140,7 +140,7 @@ class AWQ(Algorithm):
 
         if len(matches) == 0:
             nncf_logger.info("No matching patterns were found for applying AWQ algorithm, it will be skipped.")
-            return model
+            exit()
 
         target_node_names = []
         merge_node_names = []

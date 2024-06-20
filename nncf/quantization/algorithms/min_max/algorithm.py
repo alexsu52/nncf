@@ -48,6 +48,7 @@ from nncf.common.tensor_statistics.statistic_point import StatisticPoint
 from nncf.common.tensor_statistics.statistic_point import StatisticPointsContainer
 from nncf.common.utils.backend import BackendType
 from nncf.common.utils.backend import get_backend
+from nncf.experimental.common.tensor_statistics.statistics import HMinMaxTensorStatistic
 from nncf.experimental.common.tensor_statistics.statistics import MinMaxTensorStatistic
 from nncf.parameters import ModelType
 from nncf.parameters import QuantizationMode
@@ -867,6 +868,23 @@ class MinMaxQuantization(Algorithm):
                 and point.target_point == quantization_target_point
             )
 
+        # activation_statistics = {}
+        # histogram_statistics = {}
+        # weight_statistics = {}
+        # for quantization_target_point, qconfig in quantization_target_points.items():
+        #     target_node_name = quantization_target_point.target_node_name
+        #     for tensor_collector in statistic_points.get_algo_statistics_for_node(
+        #         target_node_name, filter_func, self._algorithm_key
+        #     ):
+        #         statistics = tensor_collector.get_statistics()
+        #         if quantization_target_point.is_weight_target_point():
+        #             weight_statistics[target_node_name] = statistics
+        #         else:
+        #             if isinstance(statistics, HMinMaxTensorStatistic):
+        #                 histogram_statistics[target_node_name] = statistics
+        #             else:
+        #                 activation_statistics[target_node_name] = statistics
+
         unified_ops_list = set()
         for unified_scale_group in unified_scale_groups:
             group_statistics = []
@@ -967,6 +985,17 @@ class MinMaxQuantization(Algorithm):
                     algorithm=self._algorithm_key,
                 )
             )
+            # if not quantization_target_point.is_weight_target_point():
+            #     histogram_stat_collector = self._backend_entity.histogram_statistic_collector(
+            #         num_samples=self._subset_size
+            #     )
+            #     output.add_statistic_point(
+            #         StatisticPoint(
+            #             target_point=quantization_target_point,
+            #             tensor_collector=histogram_stat_collector,
+            #             algorithm=self._algorithm_key,
+            #         )
+            #     )
         return output
 
     def _apply_model_type_pass(

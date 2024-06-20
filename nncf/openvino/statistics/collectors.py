@@ -11,8 +11,12 @@
 
 from typing import Optional
 
+import torch
+import torch.ao.quantization
+
 from nncf.experimental.common.tensor_statistics.collectors import AbsMaxReducer
 from nncf.experimental.common.tensor_statistics.collectors import AbsQuantileReducer
+from nncf.experimental.common.tensor_statistics.collectors import AggregatorBase
 from nncf.experimental.common.tensor_statistics.collectors import BatchMeanReducer
 from nncf.experimental.common.tensor_statistics.collectors import InplaceInsertionFNType
 from nncf.experimental.common.tensor_statistics.collectors import MaxReducer
@@ -26,8 +30,11 @@ from nncf.experimental.common.tensor_statistics.collectors import QuantileReduce
 from nncf.experimental.common.tensor_statistics.collectors import RawReducer
 from nncf.experimental.common.tensor_statistics.collectors import ShapeAggregator
 from nncf.experimental.common.tensor_statistics.collectors import TensorCollector
+from nncf.experimental.common.tensor_statistics.statistics import HMinMaxTensorStatistic
 from nncf.experimental.common.tensor_statistics.statistics import MeanTensorStatistic
+from nncf.experimental.common.tensor_statistics.statistics import MinMaxTensorStatistic
 from nncf.experimental.common.tensor_statistics.statistics import RawTensorStatistic
+from nncf.experimental.tensor.tensor import Tensor
 from nncf.openvino.graph.node_utils import get_inplace_batch_mean_op
 from nncf.openvino.graph.node_utils import get_inplace_max_op
 from nncf.openvino.graph.node_utils import get_inplace_mean_op
@@ -83,6 +90,35 @@ class OVAbsQuantileReducer(AbsQuantileReducer):
         return None
 
 
+class OVMinHistogramAggregator(AggregatorBase):
+    def __init__(self, num_samples: int, observer):
+        super().__init__(num_samples=num_samples)
+        self.observer = observer
+
+    def _register_reduced_input_impl(self, x) -> None:
+        self.observer.forward(torch.from_numpy(x.data))
+
+    def _aggregate_impl(self):
+        new_min, new_max = self.observer._non_linear_param_search()
+        return Tensor(new_min.numpy())
+
+
+class OVMaxHistogramAggregator(AggregatorBase):
+    def __init__(self, num_samples: int, observer, use_abs_max):
+        super().__init__(num_samples=num_samples)
+        self.observer = observer
+        self.use_abs_max = use_abs_max
+
+    def _register_reduced_input_impl(self, x) -> None:
+        pass
+
+    def _aggregate_impl(self):
+        new_min, new_max = self.observer._non_linear_param_search()
+        if self.use_abs_max:
+            new_max = torch.maximum(torch.abs(new_min), torch.abs(new_max))
+        return Tensor(new_max.numpy())
+
+
 def get_mean_statistic_collector(
     num_samples: int, channel_axis: int, window_size: Optional[int] = None, inplace: bool = True
 ) -> TensorCollector:
@@ -121,6 +157,19 @@ def get_raw_stat_collector(num_samples: Optional[int] = None) -> TensorCollector
 
     collector = TensorCollector(RawTensorStatistic)
     collector.register_statistic_branch(RawTensorStatistic.VALUES_STATS, reducer, aggregator)
+    return collector
+
+
+def get_histogram_stat_collector(num_samples, use_abs_max) -> TensorCollector:
+    reducer = RawReducer()
+
+    observer = torch.ao.quantization.HistogramObserver(qscheme=torch.per_tensor_symmetric)
+    min_aggregator = OVMinHistogramAggregator(num_samples, observer)
+    max_aggregator = OVMaxHistogramAggregator(num_samples, observer, use_abs_max)
+
+    collector = TensorCollector(MinMaxTensorStatistic)
+    collector.register_statistic_branch(MinMaxTensorStatistic.MIN_STAT, reducer, min_aggregator)
+    collector.register_statistic_branch(MinMaxTensorStatistic.MAX_STAT, reducer, max_aggregator)
     return collector
 
 

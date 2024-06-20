@@ -32,6 +32,7 @@ from nncf.openvino.graph.transformations.commands import OVTargetPoint
 from nncf.openvino.hardware.config import OVHWConfig
 from nncf.openvino.quantization.default_quantization import DEFAULT_OV_QUANT_TRAIT_TO_OP_DICT
 from nncf.openvino.statistics.collectors import OV_REDUCERS_MAP
+from nncf.openvino.statistics.collectors import get_histogram_stat_collector
 from nncf.parameters import ModelType
 from nncf.parameters import TargetDevice
 from nncf.quantization.advanced_parameters import RangeEstimatorParameters
@@ -149,6 +150,10 @@ class OVMinMaxAlgoBackend(MinMaxAlgoBackend):
         return tuple(get_weight_channel_axes(node))
 
     @staticmethod
+    def histogram_statistic_collector(num_samples: Optional[int] = None) -> TensorCollector:
+        return get_histogram_stat_collector(num_samples)
+
+    @staticmethod
     def get_statistic_collector(
         range_estimator_params: RangeEstimatorParameters,
         use_abs_max: bool,
@@ -158,6 +163,17 @@ class OVMinMaxAlgoBackend(MinMaxAlgoBackend):
         num_samples: Optional[int] = None,
     ) -> TensorCollector:
         collector = TensorCollector(MinMaxTensorStatistic)
+
+        if (
+            list(reduction_axes) == [i for i in range(len(reduction_axes))]
+            and range_estimator_params.min.statistics_type in [StatisticsType.MAX, StatisticsType.MIN]
+            and range_estimator_params.max.statistics_type in [StatisticsType.MAX, StatisticsType.MIN]
+            and range_estimator_params.min.aggregator_type == AggregatorType.MEAN
+            and range_estimator_params.max.aggregator_type == AggregatorType.MEAN
+            and (num_samples is None or num_samples > 1)
+        ):
+            return get_histogram_stat_collector(num_samples, use_abs_max)
+
         for params, container_key in zip(
             [range_estimator_params.min, range_estimator_params.max],
             [MinMaxTensorStatistic.MIN_STAT, MinMaxTensorStatistic.MAX_STAT],

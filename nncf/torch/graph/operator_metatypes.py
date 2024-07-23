@@ -444,7 +444,7 @@ class PTHardTanhMetatype(PTOperatorMetatype):
 @PT_OPERATOR_METATYPES.register()
 class PTHardSwishMetatype(PTOperatorMetatype):
     name = "HardSwishOp"
-    module_to_function_names = {NamespaceTarget.TORCH_NN_FUNCTIONAL: ["hardswish"]}
+    module_to_function_names = {NamespaceTarget.TORCH_NN_FUNCTIONAL: ["hardswish", "hardswish_"]}
     num_expected_input_edges = 1
 
 
@@ -693,7 +693,7 @@ class PTRoundMetatype(PTOperatorMetatype):
 @PT_OPERATOR_METATYPES.register()
 class PTDropoutMetatype(PTOperatorMetatype):
     name = "DropoutOp"
-    module_to_function_names = {NamespaceTarget.TORCH_NN_FUNCTIONAL: ["dropout"]}
+    module_to_function_names = {NamespaceTarget.TORCH_NN_FUNCTIONAL: ["dropout"], NamespaceTarget.TORCH: ["dropout_"]}
 
 
 @PT_OPERATOR_METATYPES.register()
@@ -707,7 +707,7 @@ class PTModuleBatchNormMetatype(PTModuleOperatorSubtype):
     name = "BatchNormOp"
     module_to_function_names = {
         NamespaceTarget.TORCH_NN_FUNCTIONAL: ["batch_norm"],
-        NamespaceTarget.ATEN: ["_native_batch_norm_legit_no_training"],
+        NamespaceTarget.ATEN: ["_native_batch_norm_legit_no_training", "cudnn_batch_norm"],
     }
 
 
@@ -716,7 +716,7 @@ class PTBatchNormMetatype(PTOperatorMetatype):
     name = "BatchNormOp"
     module_to_function_names = {
         NamespaceTarget.TORCH_NN_FUNCTIONAL: ["batch_norm"],
-        NamespaceTarget.ATEN: ["_native_batch_norm_legit_no_training"],
+        NamespaceTarget.ATEN: ["_native_batch_norm_legit_no_training", "cudnn_batch_norm"],
     }
     subtypes = [PTModuleBatchNormMetatype]
     weight_port_ids = [3]
@@ -1101,6 +1101,24 @@ class PTScaledDotProductAttentionMetatype(PTOperatorMetatype):
     target_input_ports = [0, 1]
 
 
+@PT_OPERATOR_METATYPES.register()
+class PTEmptyMetatype(PTOperatorMetatype):
+    name = "EmptyOp"
+    module_to_function_names = {NamespaceTarget.TORCH: ["empty"]}
+
+
+@PT_OPERATOR_METATYPES.register()
+class PTVectorNormMetatype(PTOperatorMetatype):
+    name = "VectorNormOp"
+    module_to_function_names = {NamespaceTarget.ATEN: ["linalg_vector_norm"]}
+
+
+@PT_OPERATOR_METATYPES.register()
+class PTClampMetatype(PTOperatorMetatype):
+    name = "ClampOp"
+    module_to_function_names = {NamespaceTarget.TORCH: ["clamp", "clamp_min"]}
+
+
 def get_operator_metatypes() -> List[Type[OperatorMetatype]]:
     """
     Returns a list of the operator metatypes.
@@ -1143,7 +1161,14 @@ UNIFICATION_PRODUCING_METATYPES = [
 
 OP_NAMES_WITH_WEIGHTS = [x for meta in OPERATORS_WITH_WEIGHTS_METATYPES for x in meta.get_all_aliases()]
 
-QUANTIZE_NODE_TYPES = ["symmetric_quantize", "asymmetric_quantize"]
+QUANTIZE_NODE_TYPES = [
+    "symmetric_quantize",
+    "asymmetric_quantize",
+    "quantize_per_tensor",
+    "dequantize_per_tensor",
+    "quantize_per_channel",
+    "dequantize_per_channel",
+]
 
 # These metatypes mix outputs for different samples into one axis.
 # If reducers and aggregators collect statistics at the output of the following operations,

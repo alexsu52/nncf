@@ -14,7 +14,6 @@ from typing import Callable, List, Optional
 import torch
 import torch.fx
 from torch.ao.quantization.fx.utils import create_getattr_from_value
-from torch.ao.quantization.pt2e.utils import _fuse_conv_bn_
 from torch.ao.quantization.pt2e.utils import _get_tensor_constant_from_node
 from torch.quantization.fake_quantize import FakeQuantize
 

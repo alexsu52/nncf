@@ -107,17 +107,18 @@ def get_number_if_op(model: ov.Model) -> int:
     return cnt_if_op(model, 0)
 
 
-def get_const_value(const_node: ov.Node, dtype: Optional[np.dtype] = None) -> np.ndarray:
+def get_const_value(const_node: ov.Node) -> np.ndarray:
     """
     Returns the constant tensor for the node.
+    This method is applicable only for the floating-point constant data.
 
     :param const_node: OpenVINO node.
-    :param dtype: Destination type.
     :return: The constant value.
     """
-    if dtype is None:
-        return const_node.data
-    return const_node.get_data(dtype=dtype)
+    if const_node.get_element_type() == ov.Type.bf16:
+        # Fixed FP32 data type as the result for BF16 constant
+        return const_node.get_data(dtype=np.float32)
+    return const_node.data
 
 
 def get_bias_value(node_with_bias: NNCFNode, nncf_graph: NNCFGraph, model: ov.Model) -> np.ndarray:
@@ -166,10 +167,10 @@ def get_node_with_bias_value(add_node: NNCFNode, nncf_graph: NNCFGraph) -> Optio
     const_port_ids = add_node.layer_attributes.get_const_port_ids()
     assert len(const_port_ids) == 1
     bias_port_id = const_port_ids[0]
-    bias_constant = nncf_graph.get_input_edges(add_node)[bias_port_id].from_node
+    bias_constant = nncf_graph.get_input_edge_by_port_id(add_node, bias_port_id).from_node
 
     if bias_constant.metatype == OVConvertMetatype:
-        bias_constant = nncf_graph.get_input_edges(bias_constant)[0].from_node
+        bias_constant = nncf_graph.get_input_edge_by_port_id(bias_constant, 0).from_node
 
     return bias_constant if bias_constant.metatype == OVConstantMetatype else None
 

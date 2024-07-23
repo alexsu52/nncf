@@ -14,6 +14,7 @@ from typing import Callable, List, Optional
 import torch
 import torch.fx
 from torch.ao.quantization.fx.utils import create_getattr_from_value
+from torch.ao.quantization.pt2e.utils import _fuse_conv_bn_
 from torch.ao.quantization.pt2e.utils import _get_tensor_constant_from_node
 from torch.quantization.fake_quantize import FakeQuantize
 
@@ -94,12 +95,12 @@ def qdq_insertion_tranformation_builder(
             )
         for target_point in target_points:
             target_node = _get_target_node(model.graph, target_point)
-            insert_one_qdq_before_node(model, target_node, quantizer)
+            insert_one_qdq_after_node(model, target_node, quantizer)
 
     return qdq_insertion_tranformation
 
 
-def insert_one_qdq_before_node(model: torch.fx.GraphModule, target_node: torch.fx.Node, quantizer: FakeQuantize):
+def insert_one_qdq_after_node(model: torch.fx.GraphModule, target_node: torch.fx.Node, quantizer: FakeQuantize):
     """
     Inserts quantize-dequantize after the target node to the target model.
 
@@ -200,6 +201,7 @@ def _get_target_node(graph: torch.fx.Graph, target_point: PTTargetPoint) -> torc
     :param target_point: A target point to find the target node.
     :return: TorchFX graph node correspondent to the target point.
     """
+    # TODO(dlyakhov): Support node insertion on a specific input port id.
     target_type = target_point.target_type
     target_node = FXModelTransformer.get_graph_node_by_name(graph, target_point.target_node_name)
     if target_type in [TargetType.OPERATOR_PRE_HOOK, TargetType.OPERATION_WITH_WEIGHTS]:
@@ -234,16 +236,21 @@ def _set_module_to_the_graph_module(
     return module_name_in_model
 
 
-def apply_quantization_transformations(model: torch.fx.Graph):
+def apply_quantization_transformations(model: torch.fx.GraphModule) -> None:
     """
     Applies quantization transformations to the model.
     :param model: Model to apply transformations to.
     """
+    # BatchNorm operations have 3 output ports,
+    # to make it easier for alorithms to work
+    # with the target graph BatchNorm operations
+    # are being fused
+    _fuse_conv_bn_(model)
     separate_conv_and_bias(model)
     separate_linear_and_bias(model)
 
 
-def revert_quantization_transformations(model: torch.fx.Graph):
+def revert_quantization_transformations(model: torch.fx.GraphModule) -> None:
     """
     Reverts quantization transformations from the model.
     :param model: Model to revert transformations from.

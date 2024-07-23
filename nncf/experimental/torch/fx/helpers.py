@@ -44,14 +44,15 @@ def is_bn_node(node: torch.fx.Node):
 
 
 def fuse_conv_bn(model: torch.fx.GraphModule) -> None:
-    '''
-    BatchNorm operations have 3 output ports, to make it easier for alorithms to work with the target graph BatchNorm operations are being fused
+    """
+    BatchNorm operations have 3 output ports, to make it easier for alorithms to work with
+    the target graph BatchNorm operations are being fused
 
     :param model: Model to apply transformations to.
-    '''
+    """
     has_bn = any(is_bn_node(node) for node in model.graph.nodes)
     if not has_bn:
-        return  
+        return
 
     for node in model.graph.nodes:
         if node.op != "call_function" or not is_bn_node(node):
@@ -68,4 +69,3 @@ def fuse_conv_bn(model: torch.fx.GraphModule) -> None:
 
     model.graph.eliminate_dead_code()
     model.recompile()
-

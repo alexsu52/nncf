@@ -18,7 +18,6 @@ from torch.ao.quantization.pt2e.duplicate_dq_pass import DuplicateDQPass
 from torch.ao.quantization.pt2e.port_metadata_pass import PortNodeMetaForQDQ
 from torch.ao.quantization.pt2e.qat_utils import _fold_conv_bn_qat
 from torch.ao.quantization.pt2e.utils import _disallow_eval_train
-from torch.ao.quantization.pt2e.utils import _fuse_conv_bn_
 from torch.fx import GraphModule
 from torch.fx.passes.infra.pass_manager import PassManager
 
@@ -90,12 +89,6 @@ def quantize_impl(
         ignored_scope=ignored_scope,
         advanced_parameters=advanced_parameters,
     )
-
-    # BatchNorm operations have 3 output ports,
-    # to make it easier for alorithms to work
-    # with the target graph BatchNorm operations
-    # are being fused
-    _fuse_conv_bn_(copied_model)
 
     # To make it easier for bias correction algorithms,
     # biases are being separated by the followng calls.

@@ -19,6 +19,7 @@ from torch.quantization.fake_quantize import FakeQuantize
 
 from nncf.common.graph.graph import NNCFNode
 from nncf.common.graph.transformations.commands import TargetType
+from nncf.experimental.torch.fx.helpers import fuse_conv_bn
 from nncf.experimental.torch.fx.model_transformer import FXModelTransformer
 from nncf.torch.graph.transformations.commands import PTTargetPoint
 
@@ -239,6 +240,7 @@ def apply_quantization_transformations(model: torch.fx.Graph):
     Applies quantization transformations to the model.
     :param model: Model to apply transformations to.
     """
+    fuse_conv_bn(model)
     separate_conv_and_bias(model)
     separate_linear_and_bias(model)
 
